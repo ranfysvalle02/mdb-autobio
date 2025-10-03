@@ -1,205 +1,499 @@
-// static/js/main.js
-
 document.addEventListener('DOMContentLoaded', () => {
-    // --- Element Selectors ---
-    const textForm = document.getElementById('text-form');
-    const textInput = document.getElementById('text-input');
-    const timeFrameSelect = document.getElementById('time-frame-select'); // NEW
-    const timeFrameFilter = document.getElementById('time-frame-filter'); // NEW
-    const recordBtn = document.getElementById('record-btn');
-    const recordBtnText = document.getElementById('record-btn-text');
-    const recordingStatus = document.getElementById('recording-status');
-    const entriesContainer = document.getElementById('entries-container');
-    const speechSupportNotice = document.getElementById('speech-support-notice');
-    const loadingIndicator = document.getElementById('loading-indicator');
 
-    // --- State for Pagination & Filtering ---
-    let currentPage = 2; // Start with 2 because page 1 is already loaded
-    let currentFilter = timeFrameFilter.value; // Store the current filter value
+    // --- GLOBAL STATE & CONSTANTS ---
+    const jsData = document.getElementById('js-data');
+    const isInvited = jsData.dataset.isInvited === 'true';
+    const inviteToken = jsData.dataset.inviteToken;
+    
+    let currentPage = 1;
     let isLoading = false;
-    let noMoreEntries = false;
-
-    // --- Speech Recognition Setup (unchanged) ---
-    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-    let recognition;
-    let isRecording = false;
-
-    if (SpeechRecognition) {
-        // ... (Speech Recognition setup code remains the same) ...
-        recognition = new SpeechRecognition();
-        recognition.continuous = true;
-        recognition.interimResults = true;
-        recognition.lang = 'en-US';
-
-        recognition.onstart = () => {
-            isRecording = true;
-            recordBtnText.textContent = 'Stop Listening';
-            recordBtn.classList.add('bg-red-500', 'hover:bg-red-600');
-            recordBtn.classList.remove('bg-indigo-600', 'hover:bg-indigo-700');
-            recordingStatus.textContent = 'Listening...';
-            recordingStatus.classList.add('recording-indicator');
-        };
-
-        recognition.onend = () => {
-            isRecording = false;
-            recordBtnText.textContent = 'Use Voice';
-            recordBtn.classList.remove('bg-red-500', 'hover:bg-red-600');
-            recordBtn.classList.add('bg-indigo-600', 'hover:bg-indigo-700');
-            recordingStatus.textContent = '';
-            recordingStatus.classList.remove('recording-indicator');
-        };
-        
-        recognition.onresult = (event) => {
-            let final_transcript = '';
-            let interim_transcript = '';
-            for (let i = event.resultIndex; i < event.results.length; ++i) {
-                event.results[i].isFinal ? final_transcript += event.results[i][0].transcript : interim_transcript += event.results[i][0].transcript;
-            }
-            // Use the correct method to update the input based on cursor position
-            const start = textInput.selectionStart;
-            const end = textInput.selectionEnd;
-            const value = textInput.value;
-            textInput.value = value.substring(0, start) + final_transcript + interim_transcript + value.substring(end);
-            textInput.selectionEnd = start + final_transcript.length + interim_transcript.length; // Move cursor
-        };
-
-        recognition.onerror = (event) => console.error('Speech recognition error:', event.error);
-    } else {
-        recordBtn.disabled = true;
-        speechSupportNotice.classList.remove('hidden');
-    }
+    let hasMorePages = true;
     
-    // --- DOM Manipulation Functions ---
-
-    // Creates a new entry card and adds it to the page (MODIFIED)
-    const addEntryToDOM = (entry, prepend = false) => {
-        const entryDiv = document.createElement('div');
-        entryDiv.className = 'bg-white p-4 rounded-lg shadow-sm entry-card';
-        
-        const timeFrameBadge = `<span class="inline-block bg-indigo-100 text-indigo-800 text-xs font-medium px-2.5 py-0.5 rounded-full mb-2">${entry.time_frame}</span>`;
-
-        const contentP = document.createElement('p');
-        contentP.className = 'text-gray-700 whitespace-pre-wrap';
-        contentP.textContent = entry.content;
-
-        entryDiv.innerHTML = `${timeFrameBadge} <p class="text-sm text-gray-500 mb-2">${entry.formatted_timestamp}</p>`;
-        entryDiv.appendChild(contentP);
-        
-        if (prepend) {
-            entriesContainer.prepend(entryDiv);
-        } else {
-            entriesContainer.appendChild(entryDiv);
-        }
+    let storyCandidates = {
+        notes: new Map(),
+        selectedNotes: new Map()
     };
-    
-    // --- Event Listeners ---
+    let previewState = {
+        timeFrame: '',
+        searchQuery: '',
+        selectedTags: [],
+        currentPage: 1,
+        totalPages: 1,
+    };
+    let searchDebounceTimer;
 
-    // Handle form submission to save a new entry (MODIFIED)
-    textForm.addEventListener('submit', async (e) => {
-        e.preventDefault();
-        const content = textInput.value.trim();
-        const timeFrame = timeFrameSelect.value; // GET NEW FIELD
-        
-        if (!content) return;
-        
-        // Stop recording if active before submission
-        if (isRecording) recognition.stop();
+    // --- ELEMENT SELECTORS ---
+    const textForm = document.getElementById('text-form');
+    const tokenForm = document.getElementById('token-form');
+    const entriesContainer = document.getElementById('entries-container');
+    const loadingIndicator = document.getElementById('loading-indicator');
+    const contributorFilter = document.getElementById('contributor-filter');
+    const timeFrameFilter = document.getElementById('time-frame-filter');
+    const labelFilter = document.getElementById('label-filter');
+    const generateStoryBtn = document.getElementById('generate-story-btn');
+    const followUpContainer = document.getElementById('follow-up-container');
+    const followUpList = document.getElementById('follow-up-list');
+    const storyModal = document.getElementById('story-modal');
+    const storyModalCloseBtn = document.getElementById('story-modal-close-btn');
+    const storyModalTitle = document.getElementById('story-modal-title');
+    const storyModalContent = document.getElementById('story-modal-content');
+    const storyPreviewModal = document.getElementById('story-preview-modal');
+    const storyPreviewCloseBtn = document.getElementById('story-preview-close-btn');
+    const confirmStoryGenerationBtn = document.getElementById('confirm-story-generation-btn');
+    const previewSearchInput = document.getElementById('preview-search-input');
+    const previewTagsContainer = document.getElementById('preview-tags-container');
+    const selectedNotesContainer = document.getElementById('selected-notes-container');
+    const selectedNotesCount = document.getElementById('selected-notes-count');
+    const previewPaginationContainer = document.getElementById('preview-pagination-container');
+    const previewResultsSummary = document.getElementById('preview-results-summary');
+    const previewNotesContainer = document.getElementById('preview-notes-container');
+    const storyPreviewTitle = document.getElementById('story-preview-title');
 
-        try {
-            const response = await fetch('/add', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                // SEND NEW FIELD
-                body: JSON.stringify({ 
-                    content: content,
-                    time_frame: timeFrame 
-                }),
-            });
-
-            if (!response.ok) throw new Error('Failed to save entry.');
-            
-            const result = await response.json();
-            
-            if (result.status === 'success') {
-                // Only prepend if the new entry matches the current filter (if one is set)
-                if (!currentFilter || result.entry.time_frame === currentFilter) {
-                    addEntryToDOM(result.entry, true); 
-                }
-                textInput.value = ''; // Clear the textarea
-            } else {
-                alert(`Error: ${result.message}`);
+    // --- ✨ NEW: INTERSECTION OBSERVER FOR SCROLL ANIMATIONS ---
+    const observer = new IntersectionObserver((entries) => {
+        entries.forEach(entry => {
+            if (entry.isIntersecting) {
+                entry.target.classList.add('reveal');
+                observer.unobserve(entry.target);
             }
-        } catch (error) {
-            console.error('Error saving entry:', error);
-            alert('Could not connect to the server to save your entry.');
-        }
-    });
+        });
+    }, { threshold: 0.1 });
 
-    // Handle voice recording button (unchanged)
-    recordBtn.addEventListener('click', () => {
-        if (!recognition) return;
-        isRecording ? recognition.stop() : recognition.start();
-    });
-    
-    // --- Filtering Logic (NEW) ---
-    timeFrameFilter.addEventListener('change', () => {
-        currentFilter = timeFrameFilter.value;
-        entriesContainer.innerHTML = ''; // Clear existing entries
-        currentPage = 1; // Reset to page 1
-        noMoreEntries = false; // Reset no more entries flag
-        loadingIndicator.textContent = "Loading more entries...";
-        fetchMoreEntries(); // Load the first page of filtered results
-    });
+    // --- CORE FUNCTIONS ---
 
-    // --- Pagination: Infinite Scroll (MODIFIED) ---
-    const fetchMoreEntries = async () => {
-        if (isLoading || noMoreEntries) return;
+    // ✨ UPDATED to add classes for animation
+    const renderEntry = (entry, prepend = false) => {
+        if (!entriesContainer) return;
+        const entryCard = document.createElement('div');
+        // Added opacity-0, transform, and transition for the reveal effect
+        entryCard.className = 'entry-card bg-white/60 backdrop-blur-lg border border-white/20 p-6 rounded-xl shadow-lg transition-all duration-700 ease-out opacity-0 transform translate-y-5';
+        
+        const labelsHTML = entry.labels && entry.labels.length > 0 ? entry.labels.map(l => `<span class="inline-block bg-green-100 text-green-800 text-xs font-semibold px-2.5 py-1 rounded-full">${l}</span>`).join('') : '';
+        const tagsHTML = entry.tags && entry.tags.length > 0 ? entry.tags.map(t => `<span class="inline-block bg-sky-100 text-sky-800 text-xs font-semibold px-2.5 py-1 rounded-full">${t}</span>`).join('') : '';
 
+        entryCard.innerHTML = `
+            <div class="flex flex-wrap items-center gap-2 mb-3">
+                <span class="inline-block bg-pink-100 text-pink-800 text-xs font-semibold px-2.5 py-1 rounded-full">${entry.contributor_label}</span>
+                <span class="inline-block bg-indigo-100 text-indigo-800 text-xs font-semibold px-2.5 py-1 rounded-full">${entry.time_frame}</span>
+                ${labelsHTML}
+                ${tagsHTML}
+            </div>
+            <p class="text-xs text-slate-400 mb-3">${entry.formatted_timestamp}</p>
+            <p class="text-slate-700 whitespace-pre-wrap leading-relaxed">${entry.content}</p>
+        `;
+
+        if (prepend) entriesContainer.prepend(entryCard);
+        else entriesContainer.appendChild(entryCard);
+        
+        // ✨ NEW: Observe the new card for the animation
+        observer.observe(entryCard);
+    };
+
+    const fetchEntries = async (isNewFilter = false) => {
+        if (isLoading || !hasMorePages) return;
         isLoading = true;
-        loadingIndicator.classList.remove('hidden');
+        
+        if (isNewFilter) {
+            currentPage = 1;
+            hasMorePages = true;
+            if (entriesContainer) entriesContainer.innerHTML = '';
+        }
+        
+        if (loadingIndicator) loadingIndicator.classList.remove('hidden');
 
-        // Construct the API URL with the current page and filter
-        const filterParam = currentFilter ? `&filter=${encodeURIComponent(currentFilter)}` : '';
-        const url = `/entries?page=${currentPage}${filterParam}`;
+        const params = new URLSearchParams({
+            page: currentPage,
+            contributor_filter: contributorFilter.value,
+            time_frame_filter: timeFrameFilter.value,
+            label_filter: labelFilter.value
+        });
         
         try {
-            const response = await fetch(url);
+            const response = await fetch(`/entries?${params}`);
             const newEntries = await response.json();
 
-            if (newEntries.length === 0) {
-                noMoreEntries = true; 
-                loadingIndicator.textContent = currentPage === 1 ? "No entries found for this time frame." : "You've reached the end!";
-            } else {
-                newEntries.forEach(entry => addEntryToDOM(entry));
+            if (newEntries.length > 0) {
+                newEntries.forEach(entry => renderEntry(entry));
                 currentPage++;
-                loadingIndicator.classList.add('hidden');
+            } else {
+                hasMorePages = false;
+                if (currentPage === 1 && entriesContainer) entriesContainer.innerHTML = `<p class="text-slate-500 text-center col-span-full">No entries found for these filters.</p>`;
             }
-        } catch (error) {
-            console.error('Error fetching more entries:', error);
-            loadingIndicator.textContent = "Error loading entries.";
+        } catch (error)
+        {
+            console.error('Failed to fetch entries:', error);
         } finally {
             isLoading = false;
+            if (loadingIndicator) loadingIndicator.classList.add('hidden');
+        }
+    };
+
+    const populateContributors = async () => {
+        if (!contributorFilter) return;
+        try {
+            const response = await fetch('/contributors');
+            const contributors = await response.json();
+            contributorFilter.innerHTML = ''; // Keep this to clear old options
+            contributors.forEach(label => {
+                const option = document.createElement('option');
+                option.value = label;
+                option.textContent = label;
+                contributorFilter.appendChild(option);
+            });
+        } catch (error) {
+            console.error('Failed to populate contributors:', error);
+        }
+    };
+
+    const populateLabelsFilter = async () => {
+        if (!labelFilter) return;
+        try {
+            const response = await fetch('/get-labels');
+            const labels = await response.json();
+            labelFilter.innerHTML = ''; // Keep this to clear old options
+            labels.forEach(label => {
+                const option = document.createElement('option');
+                option.value = label;
+                option.textContent = label;
+                labelFilter.appendChild(option);
+            });
+        } catch (error) {
+            console.error('Failed to populate labels:', error);
         }
     };
     
-    // Listen for scroll events to trigger pagination (unchanged, but now uses filter)
-    window.addEventListener('scroll', () => {
-        const { scrollTop, scrollHeight, clientHeight } = document.documentElement;
-        if (scrollTop + clientHeight >= scrollHeight - 100) {
-            fetchMoreEntries();
+    const updateFollowUps = (questions) => {
+        if (!followUpList || !followUpContainer) return;
+        followUpList.innerHTML = '';
+        if (questions && questions.length > 0) {
+            questions.forEach(q => {
+                const li = document.createElement('li');
+                // ✨ Updated with new classes
+                li.className = 'p-4 bg-indigo-50/80 text-indigo-800 rounded-lg cursor-pointer hover:bg-indigo-100 transition-all duration-300 transform hover:scale-105';
+                li.textContent = q;
+                followUpList.appendChild(li);
+            });
+            followUpContainer.classList.remove('hidden');
+        } else {
+            followUpContainer.classList.add('hidden');
         }
-    });
+    };
 
-    // Initial load check for filter (since index() already loads page 1, 
-    // we only need to call fetchMoreEntries() if the initial filter is not 'All')
-    if (currentFilter) {
-        // If an initial filter was set (though usually it's "All"), reload.
-        // Since Flask loads page 1, we can rely on scroll or change event for the first real API call.
-        // For simplicity, we assume the page starts with 'All Time Frames' (which is loaded by index()).
-        // We'll rely on the scroll event for subsequent pages.
-        if (entriesContainer.children.length === 0 && !noMoreEntries) {
-             // This might happen if the server returns 0 entries for the default filter
-            loadingIndicator.textContent = "No entries found yet.";
+    // --- NOTE SELECTOR MODAL FUNCTIONS ---
+
+    const fetchAndRenderPreviewNotes = async () => {
+        const { timeFrame, searchQuery, selectedTags, currentPage } = previewState;
+        const params = new URLSearchParams({
+            time_frame: timeFrame,
+            page: currentPage,
+            q: searchQuery,
+            tags: selectedTags.join(',')
+        });
+
+        try {
+            const response = await fetch(`/search-notes?${params}`);
+            const data = await response.json();
+            previewState.totalPages = data.total_pages;
+
+            previewNotesContainer.innerHTML = '';
+            if (data.notes.length === 0) {
+                previewNotesContainer.innerHTML = '<p class="text-slate-500 p-4">No entries found for these filters.</p>';
+            }
+
+            data.notes.forEach(note => {
+                storyCandidates.notes.set(note._id, note);
+                const noteEl = createPreviewNoteElement(note);
+                previewNotesContainer.appendChild(noteEl);
+            });
+
+            renderPagination();
+            previewResultsSummary.textContent = `Showing page ${previewState.currentPage} of ${previewState.totalPages || 1}. (${data.total_notes} total entries found)`;
+        } catch (error) {
+            console.error('Failed to search notes:', error);
+            previewNotesContainer.innerHTML = '<p class="text-red-500 p-4">Error loading entries.</p>';
         }
+    };
+
+    const createPreviewNoteElement = (note) => {
+        const isSelected = storyCandidates.selectedNotes.has(note._id);
+        const element = document.createElement('div');
+        element.className = 'p-3 border rounded-md bg-white flex items-start space-x-3 transition-colors hover:bg-slate-50';
+        const tagsHTML = note.tags && note.tags.length > 0 ? `<div class="mt-2 flex flex-wrap gap-1">${note.tags.map(t => `<span class="bg-sky-100 text-sky-800 text-xs px-2 py-0.5 rounded-full">${t}</span>`).join('')}</div>` : '';
+        
+        element.innerHTML = `
+            <input type="checkbox" data-id="${note._id}" class="note-checkbox mt-1 h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer" ${isSelected ? 'checked' : ''}>
+            <div class="flex-1">
+                <label class="block text-xs font-bold text-slate-500 cursor-pointer">${note.contributor_label}</label>
+                <p class="text-sm text-slate-800 cursor-pointer">${note.content}</p>
+                ${tagsHTML}
+            </div>
+        `;
+        return element;
+    };
+    
+    const renderPagination = () => {
+        const { currentPage, totalPages } = previewState;
+        previewPaginationContainer.innerHTML = `
+            <button class="pagination-btn bg-slate-200 px-3 py-1 rounded-md text-sm hover:bg-slate-300 transition-colors" data-page="${currentPage - 1}" ${currentPage <= 1 ? 'disabled' : ''}>Prev</button>
+            <span class="text-sm text-slate-600">Page ${currentPage} of ${totalPages || 1}</span>
+            <button class="pagination-btn bg-slate-200 px-3 py-1 rounded-md text-sm hover:bg-slate-300 transition-colors" data-page="${currentPage + 1}" ${currentPage >= totalPages ? 'disabled' : ''}>Next</button>
+        `;
+    };
+
+    const renderSelectedNotes = () => {
+        selectedNotesContainer.innerHTML = '';
+        storyCandidates.selectedNotes.forEach(note => {
+            const el = document.createElement('div');
+            el.className = 'p-2 border text-sm bg-white rounded shadow-sm';
+            el.textContent = note.content.substring(0, 80) + (note.content.length > 80 ? '...' : '');
+            selectedNotesContainer.appendChild(el);
+        });
+        const count = storyCandidates.selectedNotes.size;
+        selectedNotesCount.textContent = count;
+        confirmStoryGenerationBtn.disabled = count === 0;
+    };
+
+    const fetchAndRenderTags = async (timeFrame) => {
+        try {
+            const response = await fetch(`/get-tags?time_frame=${timeFrame}`);
+            const tags = await response.json();
+            previewTagsContainer.innerHTML = '';
+            tags.forEach(tag => {
+                previewTagsContainer.innerHTML += `
+                    <label class="flex items-center space-x-2 cursor-pointer p-1 rounded hover:bg-indigo-50">
+                        <input type="checkbox" class="tag-checkbox rounded border-slate-300 text-indigo-600 focus:ring-indigo-500" value="${tag}">
+                        <span>${tag}</span>
+                    </label>
+                `;
+            });
+        } catch (error) {
+            console.error('Failed to fetch tags:', error);
+        }
+    };
+
+    const resetPreviewState = () => {
+        storyCandidates.notes.clear();
+        storyCandidates.selectedNotes.clear();
+        previewState = { timeFrame: '', searchQuery: '', selectedTags: [], currentPage: 1, totalPages: 1 };
+        if (previewSearchInput) previewSearchInput.value = '';
+        renderSelectedNotes();
+    };
+
+
+    // --- EVENT HANDLERS (Unchanged Logic) ---
+
+    const handleTextFormSubmit = async (e) => {
+        e.preventDefault();
+        const contentEl = document.getElementById('entry-content');
+        const content = contentEl.value.trim();
+        if (!content) return;
+        
+        let timeFrame, tags = '';
+        if (isInvited) {
+            timeFrame = jsData.dataset.timeFrame;
+        } else {
+            timeFrame = document.getElementById('entry-time-frame-select').value;
+            tags = document.getElementById('entry-tags-input').value;
+        }
+        
+        const body = { content, time_frame: timeFrame, tags, invite_token: inviteToken, active_prompt: jsData.dataset.invitePrompt };
+
+        try {
+            const response = await fetch('/add', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+            if (!response.ok) throw new Error('Failed to add entry');
+            const result = await response.json();
+            contentEl.value = '';
+            
+            if (isInvited) {
+                updateFollowUps(result.new_follow_ups);
+            } else {
+                if (document.getElementById('entry-tags-input')) {
+                    document.getElementById('entry-tags-input').value = '';
+                }
+                renderEntry(result.entry, true);
+                populateContributors();
+                populateLabelsFilter();
+            }
+        } catch (error) {
+            console.error('Error submitting entry:', error);
+            alert('A network error occurred. Please try again.');
+        }
+    };
+
+    const handleTokenFormSubmit = async (e) => {
+        e.preventDefault();
+        const label = e.target.querySelector('#contributor-label-input').value;
+        const timeFrame = e.target.querySelector('#time-frame-select').value;
+        const prompt = e.target.querySelector('#prompt-textarea').value;
+        const labels = e.target.querySelector('#labels-input').value;
+        const resultDiv = document.getElementById('token-result');
+
+        try {
+            const response = await fetch('/generate-token', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ label, time_frame: timeFrame, prompt, labels })
+            });
+            const data = await response.json();
+            if (data.status === 'success') {
+                resultDiv.innerHTML = `
+                    <p class="text-sm text-slate-600 mb-2">Share this link with ${data.label}:</p>
+                    <div class="flex space-x-2">
+                        <input type="text" readonly id="invite-link-input" value="${data.invite_url}" class="flex-grow p-2 border border-slate-300 rounded-md bg-slate-50">
+                        <button type="button" id="copy-link-btn" class="bg-slate-200 text-slate-700 font-semibold px-4 rounded-md hover:bg-slate-300 transition">Copy</button>
+                    </div>
+                `;
+                
+                document.getElementById('copy-link-btn').addEventListener('click', (copyEvent) => {
+                    const linkInput = document.getElementById('invite-link-input');
+                    const copyButton = copyEvent.target;
+                    
+                    navigator.clipboard.writeText(linkInput.value).then(() => {
+                        copyButton.textContent = 'Copied!';
+                        copyButton.classList.add('bg-green-200', 'text-green-800');
+                        setTimeout(() => {
+                            copyButton.textContent = 'Copy';
+                            copyButton.classList.remove('bg-green-200', 'text-green-800');
+                        }, 2000);
+                    });
+                });
+
+            } else {
+                resultDiv.textContent = data.message || 'An error occurred.';
+            }
+        } catch (error) {
+             console.error('Error generating token:', error);
+             resultDiv.textContent = 'A network error occurred.';
+        }
+    };
+    
+    const handleGenerateStory = async () => {
+        const selectedTimeFrame = document.getElementById('story-time-frame-select').value;
+        if (!selectedTimeFrame) {
+            alert("Please select a time frame to begin building your story.");
+            return;
+        }
+
+        resetPreviewState();
+        previewState.timeFrame = selectedTimeFrame;
+        
+        storyPreviewTitle.textContent = `Build Story for: ${selectedTimeFrame}`;
+        storyPreviewModal.classList.remove('hidden');
+
+        await fetchAndRenderTags(selectedTimeFrame);
+        await fetchAndRenderPreviewNotes();
+    };
+
+    const handleConfirmStoryGeneration = async () => {
+        const notesToInclude = Array.from(storyCandidates.selectedNotes.values());
+        if (notesToInclude.length === 0) return;
+        
+        const selectedTone = document.getElementById('story-tone-select').value;
+        confirmStoryGenerationBtn.textContent = "Weaving...";
+        confirmStoryGenerationBtn.disabled = true;
+
+        try {
+            const response = await fetch('/generate-story', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ 
+                    time_frame: previewState.timeFrame, 
+                    tone: selectedTone,
+                    notes: notesToInclude 
+                })
+            });
+            const data = await response.json();
+            
+            storyPreviewModal.classList.add('hidden');
+            storyModalTitle.textContent = `Your Story: ${previewState.timeFrame}`;
+            // Added prose class for better typography from Tailwind
+            storyModalContent.innerHTML = `<div class="prose lg:prose-xl max-w-none">${data.story.replace(/\n/g, '<br>')}</div>`;
+            storyModal.classList.remove('hidden');
+        } catch (error) {
+            console.error('Error in final story generation:', error);
+        } finally {
+            confirmStoryGenerationBtn.textContent = "Weave Story";
+            // Button is re-enabled in the renderSelectedNotes function based on count
+        }
+    };
+    
+    const handleFollowUpClick = (e) => {
+        if (e.target && e.target.tagName === 'LI') {
+            const questionText = e.target.textContent;
+            const entryTextarea = document.getElementById('entry-content');
+            entryTextarea.value = questionText + '\n\n';
+            entryTextarea.focus();
+            jsData.dataset.invitePrompt = questionText;
+        }
+    };
+    
+    // --- INITIALIZATION & EVENT LISTENERS ---
+    
+    if (!isInvited) {
+        // Main User View
+        if (tokenForm) tokenForm.addEventListener('submit', handleTokenFormSubmit);
+        if (contributorFilter) contributorFilter.addEventListener('change', () => fetchEntries(true));
+        if (timeFrameFilter) timeFrameFilter.addEventListener('change', () => fetchEntries(true));
+        if (labelFilter) labelFilter.addEventListener('change', () => fetchEntries(true));
+        if (generateStoryBtn) generateStoryBtn.addEventListener('click', handleGenerateStory);
+        
+        if (storyModalCloseBtn) storyModalCloseBtn.addEventListener('click', () => storyModal.classList.add('hidden'));
+        if (storyPreviewCloseBtn) storyPreviewCloseBtn.addEventListener('click', () => storyPreviewModal.classList.add('hidden'));
+        if (confirmStoryGenerationBtn) confirmStoryGenerationBtn.addEventListener('click', handleConfirmStoryGeneration);
+
+        if (previewSearchInput) {
+            previewSearchInput.addEventListener('keyup', (e) => {
+                clearTimeout(searchDebounceTimer);
+                searchDebounceTimer = setTimeout(() => {
+                    previewState.searchQuery = e.target.value;
+                    previewState.currentPage = 1;
+                    fetchAndRenderPreviewNotes();
+                }, 500);
+            });
+        }
+
+        if (previewTagsContainer) {
+            previewTagsContainer.addEventListener('change', () => {
+                previewState.selectedTags = Array.from(previewTagsContainer.querySelectorAll('.tag-checkbox:checked')).map(cb => cb.value);
+                previewState.currentPage = 1;
+                fetchAndRenderPreviewNotes();
+            });
+        }
+
+        if (previewPaginationContainer) {
+            previewPaginationContainer.addEventListener('click', (e) => {
+                if (e.target.matches('.pagination-btn') && !e.target.disabled) {
+                    previewState.currentPage = parseInt(e.target.dataset.page);
+                    fetchAndRenderPreviewNotes();
+                }
+            });
+        }
+
+        if (previewNotesContainer) {
+            previewNotesContainer.addEventListener('change', (e) => {
+                if (e.target.matches('.note-checkbox')) {
+                    const noteId = e.target.dataset.id;
+                    const note = storyCandidates.notes.get(noteId);
+                    if (e.target.checked) storyCandidates.selectedNotes.set(noteId, note);
+                    else storyCandidates.selectedNotes.delete(noteId);
+                    renderSelectedNotes();
+                }
+            });
+        }
+
+        populateContributors();
+        populateLabelsFilter();
+        fetchEntries();
+        window.addEventListener('scroll', () => {
+            if (window.innerHeight + window.scrollY >= document.body.offsetHeight - 500) {
+                fetchEntries();
+            }
+        });
+
+    } else {
+        // Invited Contributor View
+        if (followUpList) followUpList.addEventListener('click', handleFollowUpClick);
     }
+    
+    if (textForm) textForm.addEventListener('submit', handleTextFormSubmit);
 });
