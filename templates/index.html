@@ -46,6 +46,15 @@
             opacity: 0.5; 
             cursor: not-allowed; 
         }
+        /* ✨ New styles for tag suggestions */
+        .tag-suggestion {
+            cursor: pointer;
+            transition: all 0.2s ease-in-out;
+        }
+        .tag-suggestion:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
     </style>
 </head>
 <body class="text-slate-800">
@@ -88,8 +97,8 @@
         </header>
 
         <main class="space-y-12">
-            <div class="bg-white/60 backdrop-blur-lg border border-white/20 p-6 md:p-8 rounded-xl shadow-lg">
             {% if not invite_token %}
+            <div class="bg-white/60 backdrop-blur-lg border border-white/20 p-6 md:p-8 rounded-xl shadow-lg">
                 <h2 class="text-2xl font-bold mb-5 flex items-center gap-3"><span class="text-3xl">💌</span> Invite a Contributor</h2>
                 <form id="token-form" class="space-y-4">
                     <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -105,8 +114,8 @@
                         </div>
                     </div>
                     <div>
-                        <label for="labels-input" class="block text-sm font-medium text-slate-700 mb-1">Labels <span class="text-slate-500 font-normal">(Optional)</span></label>
-                        <input type="text" id="labels-input" class="mt-1 w-full p-2 bg-white/80 border border-slate-300 rounded-md shadow-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition" placeholder="e.g., Company:MongoDB, Friend:College">
+                        <label for="labels-input" class="block text-sm font-medium text-slate-700 mb-1">Labels <span class="text-slate-500 font-normal">(e.g., Company:Acme, Project:X)</span></label>
+                        <input type="text" id="labels-input" class="mt-1 w-full p-2 bg-white/80 border border-slate-300 rounded-md shadow-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition" placeholder="Company:MongoDB, Friend:College">
                     </div>
                     <div>
                         <label for="prompt-textarea" class="block text-sm font-medium text-slate-700 mb-1">Prompt</p>
@@ -136,7 +145,11 @@
                         </div>
                         <div>
                             <label for="entry-tags-input" class="block text-sm font-medium text-slate-700 mb-1">Tags <span class="text-slate-500 font-normal">(comma separated)</span></label>
-                            <input type="text" id="entry-tags-input" name="tags" class="w-full p-3 bg-white/80 border border-slate-300 rounded-md shadow-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition" placeholder="vacation, summer, beach">
+                            <div class="flex items-center space-x-2">
+                                <input type="text" id="entry-tags-input" name="tags" class="flex-grow w-full p-3 bg-white/80 border border-slate-300 rounded-md shadow-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition" placeholder="vacation, summer, beach">
+                                <button type="button" id="suggest-tags-btn" class="flex-shrink-0 h-[46px] font-semibold py-2 px-4 rounded-lg text-white bg-gradient-to-r from-teal-500 to-cyan-500 hover:from-teal-600 hover:to-cyan-600 shadow-md hover:shadow-lg transform hover:-translate-y-0.5 transition-all duration-300 disabled:opacity-50 disabled:shadow-none disabled:transform-none">Suggest</button>
+                            </div>
+                            <div id="tag-suggestions-container" class="mt-3 flex flex-wrap gap-2"></div>
                         </div>
                     </div>
                     {% endif %}
@@ -190,7 +203,6 @@
             <div id="story-modal-content" class="text-slate-700 leading-relaxed space-y-4 prose"></div>
         </div>
     </div>
-
     <div id="story-preview-modal" class="fixed inset-0 bg-black/30 backdrop-blur-sm flex items-center justify-center p-4 hidden z-50">
         <div class="bg-slate-50 rounded-xl shadow-2xl max-w-7xl w-full h-[90vh] flex flex-col modal-animated">
             <header class="flex-shrink-0 p-4 border-b flex justify-between items-center">

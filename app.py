@@ -5,6 +5,7 @@ import re
 import uuid
 
 import openai
+import requests  # Use requests instead of mailgun
 from flask import Flask, jsonify, render_template, request, url_for
 from pymongo import MongoClient, TEXT
 
@@ -20,6 +21,15 @@ openai.api_key = os.environ.get('OPENAI_API_KEY')
 if not openai.api_key:
     print("WARNING: OPENAI_API_KEY environment variable not set. AI features will fail.")
 
+# --- Mailgun Configuration ---
+MAILGUN_API_KEY = os.environ.get('MAILGUN_API_KEY')
+MAILGUN_DOMAIN = os.environ.get('MAILGUN_DOMAIN')
+NOTIFICATION_EMAIL_TO = os.environ.get('NOTIFICATION_EMAIL_TO', 'your_personal_email@example.com')
+NOTIFICATION_EMAIL_FROM = os.environ.get('NOTIFICATION_EMAIL_FROM', 'app-alerts@your_mailgun_domain.com')
+
+if not MAILGUN_API_KEY or not MAILGUN_DOMAIN:
+    print("WARNING: MAILGUN_API_KEY or MAILGUN_DOMAIN environment variable not set. Email notifications will fail.")
+
 # --- Database Indexes for Scale ---
 entries_collection.create_index([("content", TEXT)])
 entries_collection.create_index([("tags", 1)])
@@ -31,7 +41,54 @@ ENTRIES_PER_PAGE = 10
 TIME_FRAMES = ["Early Childhood (0-6)", "School Years (7-17)", "Young Adulthood (18-29)", "Establishment (30-49)", "Midlife Reflection (50-65)", "Later Years (65+)", "Other/Unspecified"]
 STORY_TONES = ["Nostalgic & Warm", "Comedic Monologue", "Hardboiled Detective", "Documentary Narrator", "Epic Saga"]
 
-# --- AI Helper Function ---
+# ----------------------------------------------------------------------
+# --- Email Helper Function (Using Requests) ---
+# ----------------------------------------------------------------------
+
+def send_notification_email(contributor_label, time_frame, content_snippet, invite_token):
+    if not MAILGUN_API_KEY or not MAILGUN_DOMAIN:
+        print("Notification skipped: Mailgun API key or domain is missing.")
+        return
+    email_subject = f"🔔 New Autobiography Entry from {contributor_label}"
+    email_body_html = f"""
+    <html>
+        <body>
+            <h2>A new entry has been submitted to your Autobiography Journal!</h2>
+            <p><strong>Contributor:</strong> {contributor_label}</p>
+            <p><strong>Life Stage:</strong> {time_frame}</p>
+            <p><strong>Content Snippet:</strong></p>
+            <div style="border: 1px solid #ccc; padding: 10px; margin: 10px 0; background-color: #f9f9f9; border-left: 4px solid #007bff;">
+                <em>"{content_snippet[:200]}..."</em>
+            </div>
+            <p>
+                <a href="{url_for('invite_entry', token=invite_token, _external=True)}" 
+                   style="display: inline-block; padding: 10px 20px; background-color: #4CAF50; color: white; text-decoration: none; border-radius: 5px; font-weight: bold;">
+                   Continue the Conversation
+                </a>
+            </p>
+            <p style="font-size: 12px; color: #888;">This notification was sent by your Journal app.</p>
+        </body>
+    </html>
+    """
+    try:
+        response = requests.post(
+            f"https://api.mailgun.net/v3/{MAILGUN_DOMAIN}/messages",
+            auth=("api", MAILGUN_API_KEY),
+            data={"from": f"Autobiography Alert <{NOTIFICATION_EMAIL_FROM}>",
+                  "to": NOTIFICATION_EMAIL_TO,
+                  "subject": email_subject,
+                  "html": email_body_html})
+        response.raise_for_status()
+        print(f"✅ Notification email sent via Mailgun. Status: {response.status_code}")
+    except requests.exceptions.RequestException as e:
+        print(f"❌ Mailgun Error: {e}")
+        if e.response is not None:
+            print(f"Error details: {e.response.text}")
+
+# ----------------------------------------------------------------------
+# --- AI Helper Functions ---
+# ----------------------------------------------------------------------
+
 def get_ai_follow_ups(time_frame, original_prompt, entry_content):
     if not openai.api_key: return []
     try:
@@ -39,12 +96,60 @@ def get_ai_follow_ups(time_frame, original_prompt, entry_content):
         user_prompt = f"Context:\n- Life Stage: \"{time_frame}\"\n- Original Prompt: \"{original_prompt}\"\n\nUser's Latest Response:\n\"{entry_content}\"\n\nGenerate 3 follow-up questions."
         completion = openai.chat.completions.create(model="gpt-4o-mini", messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}], response_format={"type": "json_object"})
         questions_data = json.loads(completion.choices[0].message.content)
-        return questions_data.get('questions', [])
+        if isinstance(questions_data, dict):
+            return questions_data.get('questions', [])
+        elif isinstance(questions_data, list):
+            return questions_data
+        return []
+
     except Exception as e:
         print(f"Error calling OpenAI for follow-ups: {e}")
         return []
 
+def get_ai_suggested_tags(time_frame, entry_content):
+    if not openai.api_key: return []
+    try:
+        example_entries = list(entries_collection.find(
+            {'time_frame': time_frame, 'tags': {'$exists': True, '$ne': []}},
+            {'content': 1, 'tags': 1}
+        ).sort("timestamp", -1).limit(15))
+
+        example_prompt_part = ""
+        if example_entries:
+            example_prompt_part = "Here are examples of how I've tagged previous entries in this life stage:\n\n"
+            for entry in example_entries:
+                content_snippet = (entry['content'][:150] + '...') if len(entry['content']) > 150 else entry['content']
+                example_prompt_part += f"- Entry: \"{content_snippet.strip()}\"\n  Tags: {', '.join(entry['tags'])}\n"
+            example_prompt_part += "\n"
+
+        system_prompt = "You are an AI assistant that helps tag journal entries. Suggest 3-5 relevant, concise, single-word or two-word tags. Analyze the new entry and the user's past tagging style from the examples. Return the suggestions as a JSON object: {\"tags\": [\"tag1\", \"tag2\"]}."
+        
+        user_prompt = (
+            f"{example_prompt_part}"
+            f"Now, based on that context, suggest tags for this new entry:\n\n"
+            f"\"{entry_content}\""
+        )
+        
+        completion = openai.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt}
+            ],
+            response_format={"type": "json_object"}
+        )
+        
+        tags_data = json.loads(completion.choices[0].message.content)
+        return tags_data.get('tags', [])
+
+    except Exception as e:
+        print(f"Error calling OpenAI for tag suggestions: {e}")
+        return []
+
+# ----------------------------------------------------------------------
 # --- Routes ---
+# ----------------------------------------------------------------------
+
 @app.route('/')
 def index():
     latest_entries = list(entries_collection.find().sort("timestamp", -1).limit(ENTRIES_PER_PAGE))
@@ -78,23 +183,33 @@ def invite_entry(token):
 
 @app.route('/add', methods=['POST'])
 def add_entry():
+    print("\n--- /add ROUTE HIT ---") # DEBUG
     data = request.get_json()
     content, time_frame, tags_string = data.get('content', '').strip(), data.get('time_frame'), data.get('tags', '').strip()
     invite_token, active_prompt = data.get('invite_token'), data.get('active_prompt')
 
+    print(f"Received invite_token: '{invite_token}'") # DEBUG
+
     if not content or not time_frame: return jsonify({"status": "error", "message": "Missing content or time-frame"}), 400
 
-    tags = sorted(list(set([tag.strip() for tag in tags_string.split(',') if tag.strip()]))) if tags_string else []
+    tags = sorted(list(set([tag.strip().lower() for tag in tags_string.split(',') if tag.strip()]))) if tags_string else []
     
     new_follow_ups, contributor_label, labels = [], 'Me', []
+    notify_me = False 
+
     if invite_token:
+        print(f"Searching for user with token '{invite_token}' in the database...") # DEBUG
         invited_user = invited_users_collection.find_one({"token": invite_token})
         if invited_user:
+            print("✅ SUCCESS: Found user in database!") # DEBUG
             contributor_label = invited_user['label']
             time_frame = invited_user['time_frame']
             labels = invited_user.get('labels', [])
             new_follow_ups = get_ai_follow_ups(time_frame, active_prompt or invited_user.get('prompt', ''), content)
             invited_users_collection.update_one({"token": invite_token}, {"$set": {"last_suggested_questions": new_follow_ups}})
+            notify_me = True
+        else:
+            print("❌ ERROR: No user found for this token. Make sure the token exists in the 'invited_users' collection.") # DEBUG
     
     new_entry_doc = {'content': content, 'timestamp': datetime.datetime.utcnow(), 'time_frame': time_frame,
                      'contributor_label': contributor_label, 'prompt_token': invite_token, 'answered_prompt': active_prompt,
@@ -102,6 +217,11 @@ def add_entry():
     result = entries_collection.insert_one(new_entry_doc)
     new_entry_doc['_id'] = str(result.inserted_id)
     new_entry_doc['formatted_timestamp'] = new_entry_doc['timestamp'].strftime('%B %d, %Y, %-I:%M %p')
+    
+    print(f"Final check before sending. The value of 'notify_me' is: {notify_me}") # DEBUG
+    if notify_me:
+        print("🚀 FIRING send_notification_email FUNCTION! 🚀") # DEBUG
+        send_notification_email(contributor_label, time_frame, content, invite_token)
     
     return jsonify({"status": "success", "entry": new_entry_doc, "new_follow_ups": new_follow_ups}), 201
 
@@ -142,6 +262,23 @@ def get_entries():
         e['formatted_timestamp'] = e['timestamp'].strftime('%B %d, %Y, %-I:%M %p')
         entries_data.append(e)
     return jsonify(entries_data)
+
+@app.route('/suggest-tags', methods=['POST'])
+def suggest_tags():
+    if not openai.api_key:
+        return jsonify({"error": "OpenAI API key is not configured."}), 500
+    
+    data = request.get_json()
+    content = data.get('content')
+    time_frame = data.get('time_frame')
+
+    if not content or not time_frame:
+        return jsonify({"error": "Content and time_frame are required."}), 400
+
+    suggested_tags = get_ai_suggested_tags(time_frame, content)
+    
+    return jsonify({"tags": suggested_tags})
+
 
 @app.route('/get-labels')
 def get_labels():

@@ -48,8 +48,11 @@ document.addEventListener('DOMContentLoaded', () => {
     const previewResultsSummary = document.getElementById('preview-results-summary');
     const previewNotesContainer = document.getElementById('preview-notes-container');
     const storyPreviewTitle = document.getElementById('story-preview-title');
+    // ✨ NEW: Element selectors for tag suggestion
+    const suggestTagsBtn = document.getElementById('suggest-tags-btn');
+    const tagSuggestionsContainer = document.getElementById('tag-suggestions-container');
 
-    // --- ✨ NEW: INTERSECTION OBSERVER FOR SCROLL ANIMATIONS ---
+    // --- INTERSECTION OBSERVER FOR SCROLL ANIMATIONS ---
     const observer = new IntersectionObserver((entries) => {
         entries.forEach(entry => {
             if (entry.isIntersecting) {
@@ -61,11 +64,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // --- CORE FUNCTIONS ---
 
-    // ✨ UPDATED to add classes for animation
     const renderEntry = (entry, prepend = false) => {
         if (!entriesContainer) return;
         const entryCard = document.createElement('div');
-        // Added opacity-0, transform, and transition for the reveal effect
         entryCard.className = 'entry-card bg-white/60 backdrop-blur-lg border border-white/20 p-6 rounded-xl shadow-lg transition-all duration-700 ease-out opacity-0 transform translate-y-5';
         
         const labelsHTML = entry.labels && entry.labels.length > 0 ? entry.labels.map(l => `<span class="inline-block bg-green-100 text-green-800 text-xs font-semibold px-2.5 py-1 rounded-full">${l}</span>`).join('') : '';
@@ -85,7 +86,6 @@ document.addEventListener('DOMContentLoaded', () => {
         if (prepend) entriesContainer.prepend(entryCard);
         else entriesContainer.appendChild(entryCard);
         
-        // ✨ NEW: Observe the new card for the animation
         observer.observe(entryCard);
     };
 
@@ -133,7 +133,7 @@ document.addEventListener('DOMContentLoaded', () => {
         try {
             const response = await fetch('/contributors');
             const contributors = await response.json();
-            contributorFilter.innerHTML = ''; // Keep this to clear old options
+            contributorFilter.innerHTML = '';
             contributors.forEach(label => {
                 const option = document.createElement('option');
                 option.value = label;
@@ -150,7 +150,7 @@ document.addEventListener('DOMContentLoaded', () => {
         try {
             const response = await fetch('/get-labels');
             const labels = await response.json();
-            labelFilter.innerHTML = ''; // Keep this to clear old options
+            labelFilter.innerHTML = '';
             labels.forEach(label => {
                 const option = document.createElement('option');
                 option.value = label;
@@ -168,7 +168,6 @@ document.addEventListener('DOMContentLoaded', () => {
         if (questions && questions.length > 0) {
             questions.forEach(q => {
                 const li = document.createElement('li');
-                // ✨ Updated with new classes
                 li.className = 'p-4 bg-indigo-50/80 text-indigo-800 rounded-lg cursor-pointer hover:bg-indigo-100 transition-all duration-300 transform hover:scale-105';
                 li.textContent = q;
                 followUpList.appendChild(li);
@@ -280,7 +279,7 @@ document.addEventListener('DOMContentLoaded', () => {
     };
 
 
-    // --- EVENT HANDLERS (Unchanged Logic) ---
+    // --- EVENT HANDLERS ---
 
     const handleTextFormSubmit = async (e) => {
         e.preventDefault();
@@ -310,6 +309,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (document.getElementById('entry-tags-input')) {
                     document.getElementById('entry-tags-input').value = '';
                 }
+                // ✨ NEW: Clear tag suggestions after successful submission
+                if (tagSuggestionsContainer) tagSuggestionsContainer.innerHTML = '';
                 renderEntry(result.entry, true);
                 populateContributors();
                 populateLabelsFilter();
@@ -406,14 +407,12 @@ document.addEventListener('DOMContentLoaded', () => {
             
             storyPreviewModal.classList.add('hidden');
             storyModalTitle.textContent = `Your Story: ${previewState.timeFrame}`;
-            // Added prose class for better typography from Tailwind
             storyModalContent.innerHTML = `<div class="prose lg:prose-xl max-w-none">${data.story.replace(/\n/g, '<br>')}</div>`;
             storyModal.classList.remove('hidden');
         } catch (error) {
             console.error('Error in final story generation:', error);
         } finally {
             confirmStoryGenerationBtn.textContent = "Weave Story";
-            // Button is re-enabled in the renderSelectedNotes function based on count
         }
     };
     
@@ -426,6 +425,78 @@ document.addEventListener('DOMContentLoaded', () => {
             jsData.dataset.invitePrompt = questionText;
         }
     };
+
+    // --- ✨ NEW TAG SUGGESTION FUNCTIONS ---
+
+    const handleSuggestTags = async (e) => {
+        e.preventDefault();
+        const content = document.getElementById('entry-content').value.trim();
+        const timeFrame = document.getElementById('entry-time-frame-select').value;
+
+        if (!content) {
+            alert('Please write something in the entry box first to get suggestions.');
+            return;
+        }
+        
+        suggestTagsBtn.disabled = true;
+        suggestTagsBtn.textContent = '...';
+        tagSuggestionsContainer.innerHTML = `<p class="text-slate-500 text-sm">AI is thinking...</p>`;
+
+        try {
+            const response = await fetch('/suggest-tags', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ content, time_frame: timeFrame })
+            });
+
+            if (!response.ok) {
+                throw new Error('Network response was not ok');
+            }
+
+            const data = await response.json();
+            renderTagSuggestions(data.tags);
+
+        } catch (error) {
+            console.error("Failed to fetch tag suggestions:", error);
+            tagSuggestionsContainer.innerHTML = `<p class="text-red-500 text-sm">Could not get suggestions.</p>`;
+        } finally {
+            suggestTagsBtn.disabled = false;
+            suggestTagsBtn.textContent = 'Suggest';
+        }
+    };
+
+    const renderTagSuggestions = (tags) => {
+        if (!tagSuggestionsContainer) return;
+        tagSuggestionsContainer.innerHTML = ''; // Clear previous suggestions or loading text
+
+        if (!tags || tags.length === 0) {
+            tagSuggestionsContainer.innerHTML = `<p class="text-slate-500 text-sm">No suggestions found.</p>`;
+            return;
+        }
+        
+        tags.forEach(tag => {
+            const tagEl = document.createElement('button');
+            tagEl.type = 'button'; // Prevent form submission
+            tagEl.className = 'tag-suggestion bg-teal-100 text-teal-800 text-sm font-semibold px-3 py-1 rounded-full hover:bg-teal-200';
+            tagEl.textContent = tag;
+            tagEl.addEventListener('click', () => addTagToInput(tag));
+            tagSuggestionsContainer.appendChild(tagEl);
+        });
+    };
+
+    const addTagToInput = (tagToAdd) => {
+        const tagsInput = document.getElementById('entry-tags-input');
+        const currentTags = tagsInput.value.trim() 
+            ? tagsInput.value.split(',').map(t => t.trim().toLowerCase()) 
+            : [];
+        
+        const tagSet = new Set(currentTags);
+        if (!tagSet.has(tagToAdd.toLowerCase())) {
+            tagSet.add(tagToAdd.toLowerCase());
+        }
+
+        tagsInput.value = Array.from(tagSet).join(', ');
+    };
     
     // --- INITIALIZATION & EVENT LISTENERS ---
     
@@ -436,6 +507,8 @@ document.addEventListener('DOMContentLoaded', () => {
         if (timeFrameFilter) timeFrameFilter.addEventListener('change', () => fetchEntries(true));
         if (labelFilter) labelFilter.addEventListener('change', () => fetchEntries(true));
         if (generateStoryBtn) generateStoryBtn.addEventListener('click', handleGenerateStory);
+        // ✨ NEW: Event listener for the suggest tags button
+        if (suggestTagsBtn) suggestTagsBtn.addEventListener('click', handleSuggestTags);
         
         if (storyModalCloseBtn) storyModalCloseBtn.addEventListener('click', () => storyModal.classList.add('hidden'));
         if (storyPreviewCloseBtn) storyPreviewCloseBtn.addEventListener('click', () => storyPreviewModal.classList.add('hidden'));
