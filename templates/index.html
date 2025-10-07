@@ -1,237 +1,46 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{{ contributor_label if contributor_label else 'My' }} Story Weaver</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-    <style>
-        body { 
-            font-family: 'Inter', sans-serif; 
-            background-color: #f0f4f8; /* Fallback background */
-        }
-        /* Animated Gradient Background */
-        body::before {
-            content: '';
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            z-index: -1;
-            background: linear-gradient(45deg, #e0c3fc, #8ec5fc, #f0e68c, #ff9a9e);
-            background-size: 400% 400%;
-            animation: gradientBG 25s ease infinite;
-        }
-        @keyframes gradientBG {
-            0% { background-position: 0% 50%; }
-            50% { background-position: 100% 50%; }
-            100% { background-position: 0% 50%; }
-        }
-        /* Modal Animation */
-        .modal-animated {
-            animation: fadeInScale 0.3s cubic-bezier(0.165, 0.840, 0.440, 1.000);
-        }
-        @keyframes fadeInScale {
-            from { opacity: 0; transform: scale(0.95); }
-            to { opacity: 1; transform: scale(1); }
-        }
-        /* Scroll Reveal Animation */
-        .entry-card.reveal {
-            opacity: 1;
-            transform: translateY(0);
-        }
-        .pagination-btn:disabled { 
-            opacity: 0.5; 
-            cursor: not-allowed; 
-        }
-        /* ✨ New styles for tag suggestions */
-        .tag-suggestion {
-            cursor: pointer;
-            transition: all 0.2s ease-in-out;
-        }
-        .tag-suggestion:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
-        }
-    </style>
-</head>
-<body class="text-slate-800">
-    <div id="js-data" 
-         data-contributor-label="{{ contributor_label if contributor_label else 'Me' }}"
-         data-invite-token="{{ invite_token if invite_token else '' }}"
-         data-is-invited="{{ 'true' if invite_token else 'false' }}"
-         data-time-frame="{{ invite_time_frame if invite_time_frame else '' }}"
-         data-invite-prompt="{{ invite_prompt if invite_prompt else '' }}"
-    ></div>
+{% extends "base.html" %}
 
-    <div class="container mx-auto px-4 py-8 md:p-12 max-w-4xl">
-        <header class="text-center mb-16">
-            {% if invite_token %}
-                <h1 class="text-4xl md:text-5xl font-extrabold text-slate-900">Add to the Story</h1>
-                <p class="text-lg text-slate-600 mt-2">as <strong class="text-purple-600">{{ contributor_label }}</strong> regarding <strong class="text-indigo-600">{{ invite_time_frame }}</strong></p>
-                
-                <div class="mt-8 p-6 bg-white/60 backdrop-blur-lg border border-white/20 rounded-xl shadow-lg text-left">
-                    <p class="text-sm font-semibold text-slate-500 mb-2 tracking-wide uppercase">Your Prompt</p>
-                    <blockquote class="text-lg text-slate-800 border-l-4 border-indigo-500 pl-4 italic">
-                        {{ invite_prompt }}
-                    </blockquote>
-                </div>
-                
-                <div id="follow-up-container" class="bg-white/60 backdrop-blur-lg border border-white/20 p-6 rounded-xl shadow-lg mt-8 text-left {% if not last_suggested_questions %}hidden{% endif %}">
-                    <h3 class="text-xl font-semibold mb-3 text-slate-800">Continue the Story...</h3>
-                    <p class="text-slate-600 mb-4">Click a question below to keep the memory flowing.</p>
-                    <ul id="follow-up-list" class="space-y-2">
-                        {% for question in last_suggested_questions %}
-                            <li class="p-4 bg-indigo-50/80 text-indigo-800 rounded-lg cursor-pointer hover:bg-indigo-100 transition-all duration-300 transform hover:scale-105">{{ question }}</li>
-                        {% endfor %}
-                    </ul>
-                </div>
+{% block title %}Workspace - Story Weaver{% endblock %}
+
+{% block content %}
+<main class="space-y-12">
+    <div class="text-center">
+        <h2 class="text-4xl font-extrabold text-slate-900">Your Workspace</h2>
+        <p class="mt-2 text-lg text-slate-600">Create, manage, and weave your writing projects.</p>
+    </div>
+
+    <div class="content-card max-w-3xl mx-auto">
+        <h3 class="text-2xl font-bold mb-5 flex items-center gap-3"><span class="text-3xl">✨</span> Create New Project</h3>
+        <form id="new-project-form" class="space-y-4">
+            <div>
+                <label for="project-name-input" class="block text-sm font-medium text-slate-700 mb-1">Project Name</label>
+                <input type="text" id="project-name-input" required class="form-input" placeholder="e.g., 'Grandma's Biography'">
+            </div>
+            <div>
+                <label for="project-goal-input" class="block text-sm font-medium text-slate-700 mb-1">Project Goal</label>
+                <textarea id="project-goal-input" rows="3" required class="form-textarea" placeholder="e.g., 'A biography of my grandfather', 'Collect memories about our family vacations'"></textarea>
+            </div>
+            <div class="flex justify-end pt-2">
+                <button type="submit" class="btn btn-primary">Create Project</button>
+            </div>
+        </form>
+    </div>
+
+    <div>
+        <h3 class="text-3xl font-bold mb-6 text-center md:text-left">All Projects</h3>
+        <div id="projects-container" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            {% if projects %}
+                {% for project in projects %}
+                <a href="{{ url_for('project_view', project_id=project._id) }}" class="card-reveal project-card">
+                    <h4 class="text-xl font-bold text-slate-800 truncate mb-2">{{ project.name }}</h4>
+                    <p class="text-sm text-slate-600 italic border-l-2 border-pink-200 pl-3 mb-4">"{{ project.project_goal }}"</p>
+                    <p class="text-xs text-slate-500 mt-auto pt-2 border-t border-slate-200/80">Created: {{ project.created_at.strftime('%B %d, %Y') }}</p>
+                </a>
+                {% endfor %}
             {% else %}
-                <h1 class="text-5xl md:text-7xl font-extrabold bg-clip-text text-transparent bg-gradient-to-r from-purple-600 to-indigo-600">
-                    Story Weaver
-                </h1>
-                <p class="text-xl text-slate-600 mt-4">Your personal journal and shared history, beautifully woven.</p>
+                <p id="no-projects-message" class="text-slate-500 col-span-full text-center py-8">You haven't created any projects yet. Get started above!</p>
             {% endif %}
-        </header>
-
-        <main class="space-y-12">
-            {% if not invite_token %}
-            <div class="bg-white/60 backdrop-blur-lg border border-white/20 p-6 md:p-8 rounded-xl shadow-lg">
-                <h2 class="text-2xl font-bold mb-5 flex items-center gap-3"><span class="text-3xl">💌</span> Invite a Contributor</h2>
-                <form id="token-form" class="space-y-4">
-                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        <div>
-                            <label for="contributor-label-input" class="block text-sm font-medium text-slate-700 mb-1">Contributor's Name</label>
-                            <input type="text" id="contributor-label-input" required class="mt-1 w-full p-2 bg-white/80 border border-slate-300 rounded-md shadow-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition">
-                        </div>
-                        <div>
-                            <label for="time-frame-select" class="block text-sm font-medium text-slate-700 mb-1">Time Frame</label>
-                            <select id="time-frame-select" class="mt-1 w-full p-2 bg-white/80 border border-slate-300 rounded-md shadow-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition">
-                                {% for frame in time_frames %}<option value="{{ frame }}">{{ frame }}</option>{% endfor %}
-                            </select>
-                        </div>
-                    </div>
-                    <div>
-                        <label for="labels-input" class="block text-sm font-medium text-slate-700 mb-1">Labels <span class="text-slate-500 font-normal">(e.g., Company:Acme, Project:X)</span></label>
-                        <input type="text" id="labels-input" class="mt-1 w-full p-2 bg-white/80 border border-slate-300 rounded-md shadow-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition" placeholder="Company:MongoDB, Friend:College">
-                    </div>
-                    <div>
-                        <label for="prompt-textarea" class="block text-sm font-medium text-slate-700 mb-1">Prompt</p>
-                        <textarea id="prompt-textarea" rows="3" required class="mt-1 w-full p-2 bg-white/80 border border-slate-300 rounded-md shadow-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition" placeholder="e.g., 'What's a favorite memory from our time at...?'"></textarea>
-                    </div>
-                    <div class="flex justify-end pt-2">
-                        <button type="submit" class="font-semibold py-2 px-6 rounded-lg text-white bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 shadow-md hover:shadow-lg transform hover:-translate-y-0.5 transition-all duration-300">Generate Invite Link</button>
-                    </div>
-                    <div id="token-result" class="pt-4"></div>
-                </form>
-            </div>
-            {% endif %}
-
-            <div class="bg-white/60 backdrop-blur-lg border border-white/20 p-6 md:p-8 rounded-xl shadow-lg">
-                <h2 class="text-2xl font-bold mb-5 flex items-center gap-3"><span class="text-3xl">✍️</span> New Entry {% if invite_token %}<span class="text-base font-normal text-indigo-600">as {{ contributor_label }}</span>{% endif %}</h2>
-                 <form id="text-form" class="space-y-4">
-                    <div>
-                        <textarea id="entry-content" rows="6" class="w-full p-3 bg-white/80 border border-slate-300 rounded-md shadow-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition" placeholder="What's on your mind?"></textarea>
-                    </div>
-                    {% if not invite_token %}
-                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        <div>
-                            <label for="entry-time-frame-select" class="block text-sm font-medium text-slate-700 mb-1">Time Frame</label>
-                            <select id="entry-time-frame-select" name="time_frame" class="w-full p-3 bg-white/80 border border-slate-300 rounded-md shadow-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition">
-                                {% for frame in time_frames %}<option value="{{ frame }}">{{ frame }}</option>{% endfor %}
-                            </select>
-                        </div>
-                        <div>
-                            <label for="entry-tags-input" class="block text-sm font-medium text-slate-700 mb-1">Tags <span class="text-slate-500 font-normal">(comma separated)</span></label>
-                            <div class="flex items-center space-x-2">
-                                <input type="text" id="entry-tags-input" name="tags" class="flex-grow w-full p-3 bg-white/80 border border-slate-300 rounded-md shadow-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition" placeholder="vacation, summer, beach">
-                                <button type="button" id="suggest-tags-btn" class="flex-shrink-0 h-[46px] font-semibold py-2 px-4 rounded-lg text-white bg-gradient-to-r from-teal-500 to-cyan-500 hover:from-teal-600 hover:to-cyan-600 shadow-md hover:shadow-lg transform hover:-translate-y-0.5 transition-all duration-300 disabled:opacity-50 disabled:shadow-none disabled:transform-none">Suggest</button>
-                            </div>
-                            <div id="tag-suggestions-container" class="mt-3 flex flex-wrap gap-2"></div>
-                        </div>
-                    </div>
-                    {% endif %}
-                    <div class="text-right pt-2">
-                         <button type="submit" class="font-semibold py-2 px-8 rounded-lg text-white bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 shadow-md hover:shadow-lg transform hover:-translate-y-0.5 transition-all duration-300">Add Entry</button>
-                    </div>
-                </form>
-            </div>
-
-            {% if not invite_token %}
-            <div class="bg-white/60 backdrop-blur-lg border border-white/20 p-6 md:p-8 rounded-xl shadow-lg">
-                <h2 class="text-2xl font-bold mb-5 flex items-center gap-3"><span class="text-3xl">📖</span> Story Weaver</h2>
-                <p class="text-slate-600 mb-6">Select a time frame and a narrative tone, then weave your entries into a cohesive story.</p>
-                <div class="flex flex-col sm:flex-row space-y-3 sm:space-y-0 sm:space-x-4 items-center">
-                    <select id="story-time-frame-select" class="w-full h-12 p-3 bg-white/80 border border-slate-300 rounded-md shadow-sm focus:ring-2 focus:ring-purple-500 transition">
-                        <option value="">-- Select a Time Frame --</option>
-                        {% for frame in time_frames %}<option value="{{ frame }}">{{ frame }}</option>{% endfor %}
-                    </select>
-                    <select id="story-tone-select" class="w-full h-12 p-3 bg-white/80 border border-slate-300 rounded-md shadow-sm focus:ring-2 focus:ring-purple-500 transition">
-                        {% for tone in story_tones %}<option value="{{ tone }}">{{ tone }}</option>{% endfor %}
-                    </select>
-                    <button id="generate-story-btn" class="font-semibold w-full sm:w-auto h-12 px-6 rounded-lg text-white bg-gradient-to-r from-purple-600 to-pink-500 hover:from-purple-700 hover:to-pink-600 shadow-md hover:shadow-lg transform hover:-translate-y-0.5 transition-all duration-300 whitespace-nowrap">Build Story</button>
-                </div>
-            </div>
-
-            <div id="journal-entries">
-                <div class="flex flex-col sm:flex-row sm:justify-between items-start sm:items-center mb-8 space-y-4 sm:space-y-0">
-                    <h2 class="text-4xl font-bold">Your Journal</h2>
-                    <div class="flex flex-wrap gap-2">
-                        <select id="label-filter" class="p-2 border border-slate-300 rounded-md text-sm shadow-sm focus:ring-2 focus:ring-indigo-500 transition"></select>
-                        <select id="contributor-filter" class="p-2 border border-slate-300 rounded-md text-sm shadow-sm focus:ring-2 focus:ring-indigo-500 transition"></select>
-                        <select id="time-frame-filter" class="p-2 border border-slate-300 rounded-md text-sm shadow-sm focus:ring-2 focus:ring-indigo-500 transition">
-                            <option value="">All Time Frames</option>
-                            {% for frame in time_frames %}<option value="{{ frame }}">{{ frame }}</option>{% endfor %}
-                        </select>
-                    </div>
-                </div>
-                <div id="entries-container" class="space-y-6"></div>
-                <div id="loading-indicator" class="text-center p-4 text-slate-500 hidden">Loading...</div>
-            </div>
-            {% endif %}
-        </main>
-    </div>
-
-    <div id="story-modal" class="fixed inset-0 bg-black/30 backdrop-blur-sm flex items-center justify-center p-4 hidden z-50">
-        <div class="bg-white rounded-xl shadow-2xl p-6 md:p-8 max-w-3xl w-full max-h-[90vh] overflow-y-auto modal-animated">
-            <div class="flex justify-between items-center mb-4 pb-4 border-b">
-                <h3 id="story-modal-title" class="text-2xl font-bold text-slate-900">Your Story</h3>
-                <button id="story-modal-close-btn" class="text-slate-400 text-3xl hover:text-slate-800 transition-colors">&times;</button>
-            </div>
-            <div id="story-modal-content" class="text-slate-700 leading-relaxed space-y-4 prose"></div>
         </div>
     </div>
-    <div id="story-preview-modal" class="fixed inset-0 bg-black/30 backdrop-blur-sm flex items-center justify-center p-4 hidden z-50">
-        <div class="bg-slate-50 rounded-xl shadow-2xl max-w-7xl w-full h-[90vh] flex flex-col modal-animated">
-            <header class="flex-shrink-0 p-4 border-b flex justify-between items-center">
-                <h3 id="story-preview-title" class="text-xl font-bold text-slate-900">Build Your Story Manuscript</h3>
-                <button id="story-preview-close-btn" class="text-slate-400 text-3xl hover:text-slate-800 transition-colors">&times;</button>
-            </header>
-            <main class="flex-grow flex flex-col md:flex-row overflow-hidden">
-                <aside class="w-full md:w-1/4 p-4 border-r overflow-y-auto">
-                    <h4 class="font-semibold mb-2">Search & Filter</h4>
-                    <input type="search" id="preview-search-input" placeholder="Search entries..." class="w-full p-2 border rounded-md mb-4 focus:ring-2 focus:ring-indigo-500 transition">
-                    <h5 class="font-semibold mb-2 mt-4">Tags</h5>
-                    <div id="preview-tags-container" class="space-y-2 text-sm"></div>
-                </aside>
-                <section class="flex-grow p-4 flex flex-col overflow-y-auto bg-white">
-                    <div id="preview-results-summary" class="text-sm text-slate-600 mb-2 flex-shrink-0"></div>
-                    <div id="preview-notes-container" class="space-y-3 flex-grow overflow-y-auto pr-2"></div>
-                    <div id="preview-pagination-container" class="pt-4 flex justify-center items-center space-x-2 flex-shrink-0"></div>
-                </section>
-                <aside class="w-full md:w-1/3 p-4 bg-slate-100 border-l flex flex-col overflow-y-auto">
-                    <h4 class="font-semibold mb-2 flex-shrink-0">Selected Entries (<span id="selected-notes-count">0</span>)</h4>
-                    <div id="selected-notes-container" class="space-y-2 flex-grow overflow-y-auto"></div>
-                </aside>
-            </main>
-            <footer class="flex-shrink-0 p-4 border-t flex justify-end bg-slate-50 rounded-b-xl">
-                <button id="confirm-story-generation-btn" class="font-semibold py-2 px-6 rounded-lg text-white bg-gradient-to-r from-purple-600 to-pink-500 hover:from-purple-700 hover:to-pink-600 shadow-md hover:shadow-lg transform hover:-translate-y-0.5 transition-all duration-300 disabled:from-slate-400 disabled:to-slate-400 disabled:shadow-none disabled:transform-none" disabled>Weave Story</button>
-            </footer>
-        </div>
-    </div>
-
-    <script src="{{ url_for('static', filename='js/main.js') }}"></script>
-</body>
-</html>
+</main>
+{% endblock %}

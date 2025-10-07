@@ -1,0 +1,99 @@
+{% extends "base.html" %}
+
+{% block title %}{{ project.name }} - Story Weaver{% endblock %}
+
+{% block content %}
+<div id="js-data" data-project-id="{{ project._id }}" data-project-name="{{ project.name }}"></div>
+
+<main class="space-y-12">
+    <div class="text-center">
+        <h2 class="text-4xl font-extrabold text-slate-900">{{ project.name }}</h2>
+        <p class="mt-2 text-lg text-slate-600 max-w-2xl mx-auto italic">"{{ project.project_goal }}"</p>
+    </div>
+
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
+        <div class="content-card">
+            <h3 class="text-2xl font-bold mb-5 flex items-center gap-3"><span class="text-3xl">✍️</span> Add a New Note</h3>
+            <form id="note-form" class="space-y-4">
+                <div><textarea id="note-content" rows="6" class="form-textarea" placeholder="Add your thoughts, research, or memories..."></textarea></div>
+                <div>
+                    <label for="note-tags-input" class="block text-sm font-medium text-slate-700 mb-1">Tags <span class="text-slate-500 font-normal">(comma separated)</span></label>
+                    <div class="flex items-center space-x-2">
+                        <input type="text" id="note-tags-input" class="form-input" placeholder="research, chapter 1, key point">
+                        <button type="button" id="suggest-tags-btn" class="btn btn-accent flex-shrink-0 h-[46px] disabled:opacity-50">Suggest</button>
+                    </div>
+                    <div id="tag-suggestions-container" class="mt-3 flex flex-wrap gap-2"></div>
+                </div>
+                <div class="text-right pt-2"><button type="submit" class="btn btn-primary">Add Note</button></div>
+            </form>
+        </div>
+        <div class="content-card">
+            <h3 class="text-2xl font-bold mb-5 flex items-center gap-3"><span class="text-3xl">💌</span> Invite a Contributor</h3>
+            <form id="token-form" class="space-y-4">
+                <div><label for="contributor-label-input" class="block text-sm font-medium text-slate-700 mb-1">Contributor's Name</label><input type="text" id="contributor-label-input" required class="form-input"></div>
+                <div><label for="prompt-textarea" class="block text-sm font-medium text-slate-700 mb-1">Prompt</label><textarea id="prompt-textarea" rows="3" required class="form-textarea" placeholder="e.g., 'What do you remember about the summer of '82?'"></textarea></div>
+                <div class="flex justify-end pt-2"><button type="submit" class="btn btn-primary">Generate Invite Link</button></div>
+                <div id="token-result" class="pt-4"></div>
+            </form>
+        </div>
+        <div class="content-card lg:col-span-2">
+            <h3 class="text-2xl font-bold mb-5 flex items-center gap-3"><span class="text-3xl">🚀</span> Create a Shared Invite</h3>
+            <p class="text-slate-600 mb-4 text-sm">Generate a single link to share with a group. Each person can add their own name when they contribute.</p>
+            <form id="shared-token-form" class="space-y-4">
+                <div>
+                    <label for="shared-prompt-textarea" class="block text-sm font-medium text-slate-700 mb-1">Prompt for the Group</label>
+                    <textarea id="shared-prompt-textarea" rows="3" required class="form-textarea" placeholder="e.g., 'What was your favorite moment from the project kickoff?'"></textarea>
+                </div>
+                <div class="flex justify-end pt-2">
+                    <button type="submit" class="btn btn-accent">Generate Shared Link</button>
+                </div>
+                <div id="shared-token-result" class="pt-4"></div>
+            </form>
+        </div>
+    </div>
+
+    <div class="content-card">
+        <h3 class="text-2xl font-bold mb-5 flex items-center gap-3"><span class="text-3xl">📖</span> Weave Your Story</h3>
+        <p class="text-slate-600 mb-6">Select a narrative tone, choose your notes, and weave them into a cohesive narrative.</p>
+        <div class="flex flex-col sm:flex-row space-y-3 sm:space-y-0 sm:space-x-4 items-center">
+            <select id="story-tone-select" class="form-select h-12">
+                {% for tone in story_tones %}<option value="{{ tone }}">{{ tone }}</option>{% endfor %}
+            </select>
+            <button type="button" id="generate-story-btn" data-modal-target="story-preview-modal" class="btn btn-secondary w-full sm:w-auto h-12 whitespace-nowrap">Build Story</button>
+        </div>
+    </div>
+
+    <div id="project-notes">
+        <div class="flex flex-col sm:flex-row sm:justify-between items-start sm:items-center mb-8 space-y-4 sm:space-y-0">
+            <h3 class="text-4xl font-bold">Project Notes</h3>
+            <select id="contributor-filter" class="form-select w-full sm:w-auto"></select>
+        </div>
+        <div id="notes-container" class="space-y-6"></div>
+        <div id="loading-indicator" class="text-center p-4 text-slate-500 hidden">Loading...</div>
+    </div>
+</main>
+{% endblock %}
+
+{% block modals %}
+    <div id="story-modal" class="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center p-4 hidden z-50">
+        <div class="bg-white rounded-xl shadow-2xl p-6 md:p-8 max-w-3xl w-full max-h-[90vh] overflow-y-auto modal-animated">
+            <div class="flex justify-between items-center mb-4 pb-4 border-b">
+                <h3 id="story-modal-title" class="text-2xl font-bold text-slate-900">Your Story</h3>
+                <button class="modal-close-btn text-slate-400 text-3xl hover:text-slate-800 transition-colors">&times;</button>
+            </div>
+            <div id="story-modal-content" class="text-slate-700 leading-relaxed space-y-4 prose max-w-none"></div>
+        </div>
+    </div>
+
+    <div id="story-preview-modal" class="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center p-4 hidden z-50">
+        <div class="bg-slate-50 rounded-xl shadow-2xl max-w-7xl w-full h-[90vh] flex flex-col modal-animated">
+            <header class="flex-shrink-0 p-4 border-b flex justify-between items-center"><h3 id="story-preview-title" class="text-xl font-bold text-slate-900">Build Your Story</h3><button class="modal-close-btn text-slate-400 text-3xl hover:text-slate-800 transition-colors">&times;</button></header>
+            <main class="flex-grow flex flex-col md:flex-row overflow-hidden">
+                <aside class="w-full md:w-1/4 p-4 border-r overflow-y-auto"><h4 class="font-semibold mb-2">Search & Filter</h4><input type="search" id="preview-search-input" placeholder="Search notes..." class="form-input mb-4"><h5 class="font-semibold mb-2 mt-4">Tags</h5><div id="preview-tags-container" class="space-y-2 text-sm"></div></aside>
+                <section class="flex-grow p-4 flex flex-col overflow-y-auto bg-white"><div id="preview-results-summary" class="text-sm text-slate-600 mb-2 flex-shrink-0"></div><div id="preview-notes-container" class="space-y-3 flex-grow overflow-y-auto pr-2"></div><div id="preview-pagination-container" class="pt-4 flex justify-center items-center space-x-2 flex-shrink-0"></div></section>
+                <aside class="w-full md:w-1/3 p-4 bg-slate-100 border-l flex flex-col overflow-y-auto"><h4 class="font-semibold mb-2 flex-shrink-0">Selected Notes (<span id="selected-notes-count">0</span>)</h4><div id="selected-notes-container" class="space-y-2 flex-grow overflow-y-auto"></div></aside>
+            </main>
+            <footer class="flex-shrink-0 p-4 border-t flex justify-end bg-slate-50 rounded-b-xl"><button id="confirm-story-generation-btn" class="btn btn-secondary disabled:from-slate-400 disabled:to-slate-400" disabled>Weave Story</button></footer>
+        </div>
+    </div>
+{% endblock %}
