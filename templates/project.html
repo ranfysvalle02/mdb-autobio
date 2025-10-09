@@ -6,7 +6,8 @@
 <div id="js-data" 
     data-project-id="{{ project._id }}" 
     data-project-name="{{ project.name }}"
-    data-project-type="{{ project.project_type }}">
+    data-project-type="{{ project.project_type }}"
+    data-is-atlas="{{ is_atlas }}">
 </div>
 
 <main class="space-y-12">
@@ -56,9 +57,15 @@
     </div>
 
     <div class="content-card">
-        <h3 class="text-2xl font-bold mb-5 flex items-center gap-3"><span class="text-3xl">🤖</span> AI Actions</h3>
-        <p class="text-slate-600 mb-6">Select notes from your project to have the AI weave them into a story or generate a practice quiz.</p>
+        <h3 class="text-2xl font-bold mb-5 flex items-center gap-3"><span class="text-3xl">🤖</span> AI Actions & Search</h3>
+        <p class="text-slate-600 mb-6">Select notes from your project to search, manage, weave them into a story, or generate a practice quiz.</p>
         <div class="flex flex-col sm:flex-row items-stretch gap-4">
+            
+            <div class="flex-shrink-0 self-end">
+                 <button type="button" id="launch-search-btn" class="btn btn-primary w-full sm:w-auto h-12 whitespace-nowrap">Search & Manage</button>
+            </div>
+            <div class="border-t sm:border-t-0 sm:border-l border-slate-200"></div>
+
             <div class="flex-1">
                 <label for="story-tone-select" class="block text-sm font-medium text-slate-700 mb-1">Select Narrative Tone</label>
                 <select id="story-tone-select" class="form-select h-12">
@@ -68,6 +75,7 @@
             <div class="flex-shrink-0 self-end">
                 <button type="button" id="launch-story-builder-btn" class="btn btn-secondary w-full sm:w-auto h-12 whitespace-nowrap">Weave a Story</button>
             </div>
+            
             <div class="border-t sm:border-t-0 sm:border-l border-slate-200"></div>
             <div class="flex-shrink-0 self-end">
                  <button type="button" data-modal-target="quiz-options-modal" class="btn btn-accent w-full sm:w-auto h-12 whitespace-nowrap">Generate a Quiz</button>
@@ -124,7 +132,21 @@
         <div class="bg-slate-50 rounded-xl shadow-2xl max-w-7xl w-full h-[90vh] flex flex-col modal-animated">
             <header class="flex-shrink-0 p-4 border-b flex justify-between items-center"><h3 id="note-selection-title" class="text-xl font-bold text-slate-900">Select Notes</h3><button class="modal-close-btn text-slate-400 text-3xl hover:text-slate-800 transition-colors">&times;</button></header>
             <main class="flex-grow flex flex-col md:flex-row overflow-hidden">
-                <aside class="w-full md:w-1/4 p-4 border-r overflow-y-auto"><h4 class="font-semibold mb-2">Search & Filter</h4><input type="search" id="preview-search-input" placeholder="Search notes..." class="form-input mb-4"><h5 class="font-semibold mb-2 mt-4">Tags</h5><div id="preview-tags-container" class="space-y-2 text-sm"></div></aside>
+                <aside class="w-full md:w-1/4 p-4 border-r overflow-y-auto">
+                    <h4 class="font-semibold mb-2">Search & Filter</h4>
+                    
+                    <div id="search-type-selector-container" class="mb-4 hidden">
+                        <label for="preview-search-type" class="block text-sm font-medium text-slate-700 mb-1">Search Type</label>
+                        <select id="preview-search-type" class="form-select">
+                            <option value="vector">Vector (Semantic)</option>
+                            <option value="text">Text (Keyword)</option>
+                        </select>
+                    </div>
+
+                    <input type="search" id="preview-search-input" placeholder="Search notes..." class="form-input mb-4">
+                    <h5 class="font-semibold mb-2 mt-4">Tags</h5>
+                    <div id="preview-tags-container" class="space-y-2 text-sm"></div>
+                </aside>
                 <section class="flex-grow p-4 flex flex-col overflow-y-auto bg-white"><div id="preview-results-summary" class="text-sm text-slate-600 mb-2 flex-shrink-0"></div><div id="preview-notes-container" class="space-y-3 flex-grow overflow-y-auto pr-2"></div><div id="preview-pagination-container" class="pt-4 flex justify-center items-center space-x-2 flex-shrink-0"></div></section>
                 <aside class="w-full md:w-1/3 p-4 bg-slate-100 border-l flex flex-col overflow-y-auto"><h4 class="font-semibold mb-2 flex-shrink-0">Selected Notes (<span id="selected-notes-count">0</span>)</h4><div id="selected-notes-container" class="space-y-2 flex-grow overflow-y-auto"></div></aside>
             </main>
@@ -182,4 +204,3 @@
         </div>
     </div>
 {% endblock %}
-

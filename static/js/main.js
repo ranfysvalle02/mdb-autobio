@@ -4,7 +4,8 @@ document.addEventListener('DOMContentLoaded', () => {
     const jsData = document.getElementById('js-data');
     const projectId = jsData?.dataset.projectId;
     const projectName = jsData?.dataset.projectName;
-    
+    const isAtlas = jsData?.dataset.isAtlas === 'True';
+
     // Determine current page/view to attach correct listeners
     const isWorkspaceView = !!document.getElementById('new-project-form');
     const isProjectView = !!document.getElementById('project-notes') && !!projectId;
@@ -21,9 +22,7 @@ document.addEventListener('DOMContentLoaded', () => {
     let quizGenerationOptions = {};
     let selectedNotes = []; // Holds full note objects for API calls
     let noteSelectionCandidates = new Map(); // Caches notes for the selection modal
-    let previewState = { searchQuery: '', selectedTags: [], currentPage: 1, totalPages: 1 };
-
-    // --- ELEMENT SELECTORS (lazy-loaded in functions) ---
+    let previewState = { searchQuery: '', selectedTags: [], currentPage: 1, totalPages: 1, searchType: 'text' };
 
     // --- CORE LOGIC ---
 
@@ -46,12 +45,16 @@ document.addEventListener('DOMContentLoaded', () => {
         const newProjectForm = document.getElementById('new-project-form');
         newProjectForm?.addEventListener('submit', handleNewProjectSubmit);
     }
-
     function setupProjectView() {
         // AI Action Launchers
         document.getElementById('launch-story-builder-btn')?.addEventListener('click', () => {
             activeAIAction = 'generate-story';
             resetAndOpenNoteSelector('Select Notes to Weave a Story');
+        });
+
+        document.getElementById('launch-search-btn')?.addEventListener('click', () => {
+            activeAIAction = null; // No action, just searching
+            resetAndOpenNoteSelector('Search & Manage Notes');
         });
 
         const quizOptionsForm = document.getElementById('quiz-options-form');
@@ -88,15 +91,21 @@ document.addEventListener('DOMContentLoaded', () => {
             }, 500);
         });
         document.getElementById('preview-tags-container')?.addEventListener('change', () => {
-             previewState.selectedTags = Array.from(document.querySelectorAll('#preview-tags-container .tag-checkbox:checked')).map(cb => cb.value);
-             previewState.currentPage = 1;
-             fetchAndRenderPreviewNotes();
+            previewState.selectedTags = Array.from(document.querySelectorAll('#preview-tags-container .tag-checkbox:checked')).map(cb => cb.value);
+            previewState.currentPage = 1;
+            fetchAndRenderPreviewNotes();
         });
-         document.getElementById('preview-pagination-container')?.addEventListener('click', (e) => {
+        document.getElementById('preview-pagination-container')?.addEventListener('click', (e) => {
             if (e.target.matches('.pagination-btn') && !e.target.disabled) {
                 previewState.currentPage = parseInt(e.target.dataset.page, 10);
                 fetchAndRenderPreviewNotes();
             }
+        });
+        
+        document.getElementById('preview-search-type')?.addEventListener('change', (e) => {
+            previewState.searchType = e.target.value;
+            previewState.currentPage = 1;
+            fetchAndRenderPreviewNotes(); // Re-fetch notes with the new search type
         });
 
         // Initial data load for project page
@@ -180,8 +189,17 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     async function fetchAndRenderPreviewNotes() {
-        const { searchQuery, selectedTags, currentPage } = previewState;
-        const params = new URLSearchParams({ page: currentPage, q: searchQuery, tags: selectedTags.join(',') });
+        const { searchQuery, selectedTags, currentPage, searchType } = previewState;
+        const params = new URLSearchParams({ 
+            page: currentPage, 
+            q: searchQuery, 
+            tags: selectedTags.join(',') 
+        });
+
+        if (isAtlas) {
+            params.append('search_type', searchType);
+        }
+        
         const previewNotesContainer = document.getElementById('preview-notes-container');
         
         try {
@@ -254,6 +272,121 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
     
+    async function handleTokenFormSubmit(e) {
+        e.preventDefault();
+        const form = e.target;
+        const labelInput = form.querySelector('#contributor-label-input');
+        const promptInput = form.querySelector('#prompt-textarea');
+        const resultDiv = document.getElementById('token-result');
+        const submitBtn = form.querySelector('button[type="submit"]');
+
+        const label = labelInput.value.trim();
+        const prompt = promptInput.value.trim();
+
+        if (!label || !prompt) {
+            alert("Please provide both a contributor's name and a prompt.");
+            return;
+        }
+
+        setButtonLoading(submitBtn, 'Generating...');
+        resultDiv.innerHTML = '';
+
+        try {
+            const response = await fetch('/api/generate-token', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ label, prompt, project_id: projectId })
+            });
+
+            const data = await response.json();
+
+            if (!response.ok) {
+                throw new Error(data.message || 'Failed to generate link.');
+            }
+
+            if (data.status === 'success') {
+                resultDiv.innerHTML = `
+                    <p class="text-sm font-medium text-slate-700 mb-2">Share this unique link with ${data.label}:</p>
+                    <div class="flex items-center space-x-2">
+                        <input type="text" value="${data.invite_url}" readonly class="form-input flex-grow bg-slate-100">
+                        <button type="button" class="btn btn-secondary flex-shrink-0 copy-btn">Copy</button>
+                    </div>
+                `;
+                
+                resultDiv.querySelector('.copy-btn').addEventListener('click', (copyEvent) => {
+                    const urlToCopy = copyEvent.target.previousElementSibling.value;
+                    navigator.clipboard.writeText(urlToCopy).then(() => {
+                        setButtonLoading(copyEvent.target, 'Copied!');
+                        setTimeout(() => setButtonActive(copyEvent.target, 'Copy'), 2000);
+                    }).catch(err => console.error('Failed to copy text: ', err));
+                });
+
+                // Clear the form for the next entry
+                labelInput.value = '';
+                promptInput.value = '';
+            } else {
+                resultDiv.innerHTML = `<p class="text-red-600">${data.message}</p>`;
+            }
+        } catch (error) {
+            console.error('Error generating token:', error);
+            resultDiv.innerHTML = `<p class="text-red-600">An unexpected error occurred: ${error.message}</p>`;
+        } finally {
+            setButtonActive(submitBtn, 'Generate Invite Link');
+        }
+    }
+    
+    async function handleGenerateNotesSubmit(e) {
+        e.preventDefault();
+        const form = e.target;
+        const topicInput = form.querySelector('#note-topic-input');
+        const submitBtn = form.querySelector('button[type="submit"]');
+        const topic = topicInput.value.trim();
+
+        if (!topic) {
+            alert('Please enter a topic to generate notes for.');
+            return;
+        }
+
+        setButtonLoading(submitBtn, 'Generating...');
+
+        try {
+            const response = await fetch('/api/generate-notes', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ project_id: projectId, topic })
+            });
+
+            const data = await response.json();
+
+            if (!response.ok) {
+                throw new Error(data.error || 'Failed to generate notes.');
+            }
+
+            if (data.status === 'success' && data.notes.length > 0) {
+                // Check if the "no notes" message is showing and remove it
+                const notesContainer = document.getElementById('notes-container');
+                const noNotesMessage = notesContainer.querySelector('p');
+                if (noNotesMessage && notesContainer.children.length === 1) {
+                    notesContainer.innerHTML = '';
+                }
+                
+                // Render each new note by prepending it to the list
+                data.notes.reverse().forEach(note => {
+                    renderNote(note, true); // true for prepend
+                });
+                topicInput.value = ''; // Clear input on success
+            } else {
+                alert('The AI could not generate notes for this topic. Please try a different one.');
+            }
+
+        } catch (error) {
+            console.error('Error generating notes:', error);
+            alert(`An error occurred: ${error.message}`);
+        } finally {
+            setButtonActive(submitBtn, 'Generate Notes');
+        }
+    }
+
     // --- AI ACTION HANDLERS ---
     
     function handleConfirmAction() {
@@ -365,10 +498,19 @@ document.addEventListener('DOMContentLoaded', () => {
     function resetAndOpenNoteSelector(title) {
         selectedNotes = [];
         noteSelectionCandidates.clear();
-        previewState = { searchQuery: '', selectedTags: [], currentPage: 1, totalPages: 1 };
+        previewState = { searchQuery: '', selectedTags: [], currentPage: 1, totalPages: 1, searchType: 'text' };
+        
+        const searchTypeContainer = document.getElementById('search-type-selector-container');
+        if (isAtlas) {
+            searchTypeContainer.classList.remove('hidden');
+        } else {
+            searchTypeContainer.classList.add('hidden');
+        }
+
         document.getElementById('note-selection-title').textContent = title;
         updateSelectedNotesUI();
         document.getElementById('preview-search-input').value = '';
+        document.getElementById('preview-search-type').value = 'text'; // Reset to default
         fetchAndRenderTags();
         fetchAndRenderPreviewNotes();
         document.getElementById('note-selection-modal').classList.remove('hidden');
@@ -381,7 +523,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const contentPreview = note.content.substring(0, 150) + (note.content.length > 150 ? '...' : '');
         
         element.innerHTML = `
-            <input type="checkbox" data-note-id="${note._id}" data-note-content="${escape(note.content)}" class="mt-1 h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer" ${isSelected ? 'checked' : ''}>
+            <input type="checkbox" data-note-id="${note._id}" data-note-content="${encodeURIComponent(note.content)}" class="mt-1 h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer" ${isSelected ? 'checked' : ''}>
             <div>
                 <label class="block text-xs font-bold text-slate-500 cursor-pointer">${note.contributor_label}</label>
                 <p class="text-sm text-slate-800 cursor-pointer">${contentPreview}</p>
@@ -417,7 +559,7 @@ document.addEventListener('DOMContentLoaded', () => {
     function handleNoteCheckboxChange(e) {
         if (e.target.matches('input[type="checkbox"]')) {
             const noteId = e.target.dataset.noteId;
-            const noteContent = unescape(e.target.dataset.noteContent);
+            const noteContent = decodeURIComponent(e.target.dataset.noteContent);
             
             if (e.target.checked) {
                 if (!selectedNotes.some(n => n._id === noteId)) {
@@ -488,16 +630,6 @@ document.addEventListener('DOMContentLoaded', () => {
         tagsInput.value = Array.from(currentTags).join(', ');
     }
 
-    async function handleTokenFormSubmit(e) {
-        e.preventDefault();
-        // Logic for generating and displaying invite tokens
-    }
-    
-    async function handleGenerateNotesSubmit(e) {
-        e.preventDefault();
-        // Logic for AI generating study notes
-    }
-
     function setButtonLoading(button, text = 'Loading...') {
         if(button) {
             button.disabled = true;
@@ -515,4 +647,3 @@ document.addEventListener('DOMContentLoaded', () => {
     // --- INITIALIZE THE APP ---
     initializePage();
 });
-

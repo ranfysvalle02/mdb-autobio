@@ -2,7 +2,8 @@ import datetime
 import json
 import os
 import uuid
-
+import sys
+import time
 import openai
 import requests
 from bson.objectid import ObjectId
@@ -11,6 +12,7 @@ from flask import (Flask, jsonify, render_template, request, url_for, redirect,
 from flask_login import (LoginManager, UserMixin, login_user, logout_user,
                          login_required, current_user)
 from pymongo import MongoClient, TEXT
+from pymongo.errors import OperationFailure
 from werkzeug.security import generate_password_hash, check_password_hash
 
 app = Flask(__name__)
@@ -30,6 +32,17 @@ openai.api_key = os.environ.get('OPENAI_API_KEY')
 if not openai.api_key:
     print("WARNING: OPENAI_API_KEY environment variable not set. AI features will fail.")
 
+# --- NEW: Atlas Vector Search Configuration ---
+# This index name will be used for the Atlas Search index.
+ATLAS_LUCENE_INDEX_NAME = "notes_text_search" # New index name for Lucene
+ATLAS_VECTOR_SEARCH_INDEX_NAME = os.environ.get('ATLAS_VECTOR_SEARCH_INDEX_NAME', 'default_vector_index')
+# Automatically detect if the URI points to an Atlas cluster.
+IS_ATLAS = True
+if IS_ATLAS:
+    print("✅ Atlas environment detected. Vector Search features will be enabled.")
+else:
+    print("ℹ️ Local MongoDB environment detected. Falling back to standard text search.")
+
 # --- Mailgun Configuration ---
 MAILGUN_API_KEY = os.environ.get('MAILGUN_API_KEY')
 MAILGUN_DOMAIN = os.environ.get('MAILGUN_DOMAIN')
@@ -40,12 +53,107 @@ if not MAILGUN_API_KEY or not MAILGUN_DOMAIN:
     print("WARNING: MAILGUN_API_KEY or MAILGUN_DOMAIN environment variable not set. Email notifications will fail.")
 
 # --- Database Indexes for Scale ---
+# Legacy index for non-Atlas environments
 notes_collection.create_index([("content", TEXT)])
+# Standard indexes
 notes_collection.create_index([("tags", 1)])
 notes_collection.create_index([("project_id", 1), ("user_id", 1), ("timestamp", -1)])
 projects_collection.create_index([("user_id", 1), ("created_at", -1)])
 quizzes_collection.create_index([("share_token", 1)], unique=True, sparse=True)
 quizzes_collection.create_index([("project_id", 1), ("created_at", -1)])
+
+def wait_for_index(coll, index_name: str, timeout: int = 300):
+    """Poll search indexes until the specified index is ready."""
+    print(f"⏳ Waiting for index '{index_name}' to be ready...")
+    start_time = time.time()
+    while time.time() - start_time < timeout:
+        try:
+            indexes = list(coll.list_search_indexes(name=index_name))
+            if indexes and (indexes[0].get('status') == 'READY' or indexes[0].get('queryable') == True):
+                print(f"✅ Index '{index_name}' is ready.")
+                return True
+            time.sleep(5)
+        except OperationFailure:
+            time.sleep(5)
+    raise TimeoutError(f"Index '{index_name}' did not become ready in {timeout}s.")
+
+
+def ensure_atlas_indexes():
+    """Checks for, creates, and waits for both the Atlas Vector and Lucene Search indexes."""
+    # Assuming IS_ATLAS, notes_collection, ATLAS_VECTOR_SEARCH_INDEX_NAME, 
+    # ATLAS_LUCENE_INDEX_NAME, and wait_for_index are defined globally or imported.
+    if not IS_ATLAS:
+        print("INFO: Skipping Atlas Search index check for non-Atlas environment.")
+        return
+
+    try:
+        # Get existing indexes to avoid unnecessary creation attempts
+        existing_indexes = list(notes_collection.list_search_indexes())
+        existing_names = {index['name'] for index in existing_indexes}
+
+        # --- 1. Check/Create Atlas Vector Search Index ---
+        if ATLAS_VECTOR_SEARCH_INDEX_NAME not in existing_names:
+            print(f"⚠️ Atlas Search index '{ATLAS_VECTOR_SEARCH_INDEX_NAME}' not found. Attempting to create it...")
+            
+            # This index primarily supports vector search, but also contains other fields
+            vector_index_definition = {
+                "name": ATLAS_VECTOR_SEARCH_INDEX_NAME,
+                "definition": {
+                    "mappings": {
+                        "dynamic": False,
+                        "fields": {
+                            "content": {"type": "string", "analyzer": "lucene.standard"},
+                            "content_embedding": {"type": "knnVector", "similarity": "cosine", "dimensions": 1536},
+                            "project_id": {"type": "objectId"},  # Use objectId type for filtering
+                            "user_id": {"type": "objectId"},      # Use objectId type for filtering
+                            "tags": {"type": "string", "analyzer": "lucene.keyword"}
+                        }
+                    }
+                }
+            }
+            notes_collection.create_search_index(model=vector_index_definition)
+            print(f"✅ Successfully initiated creation of Atlas Vector Search index '{ATLAS_VECTOR_SEARCH_INDEX_NAME}'.")
+            wait_for_index(notes_collection, ATLAS_VECTOR_SEARCH_INDEX_NAME)
+        else:
+            print(f"✅ Atlas Vector Search index '{ATLAS_VECTOR_SEARCH_INDEX_NAME}' already exists and is assumed to be ready.")
+
+        # --- 2. Check/Create Atlas Lucene Text Search Index (for $search) ---
+        if ATLAS_LUCENE_INDEX_NAME not in existing_names:
+            print(f"⚠️ Atlas Lucene Search index '{ATLAS_LUCENE_INDEX_NAME}' not found. Attempting to create it...")
+            
+            lucene_index_definition = {
+                "name": ATLAS_LUCENE_INDEX_NAME,
+                "definition": {
+                    "mappings": {
+                        "dynamic": False,
+                        "fields": {
+                            # Field for full-text search (used by 'text' operator)
+                            "content": {"type": "string", "analyzer": "lucene.standard"},
+                            
+                            # FIELDS FOR EXACT-MATCH FILTERING (FIX APPLIED HERE)
+                            "project_id": {"type": "objectId"},  # MUST be 'objectId' to work reliably with 'equals'
+                            "user_id": {"type": "objectId"},     # MUST be 'objectId' to work reliably with 'equals'
+                            
+                            # Field for keyword/tag filtering
+                            "tags": {"type": "string", "analyzer": "lucene.keyword"},
+                            
+                            # Including other fields required by your $project stage
+                            "timestamp": {"type": "date"},
+                            "contributor_label": {"type": "string", "analyzer": "lucene.keyword"}
+                        }
+                    }
+                }
+            }
+            notes_collection.create_search_index(model=lucene_index_definition)
+            print(f"✅ Successfully initiated creation of Atlas Lucene Search index '{ATLAS_LUCENE_INDEX_NAME}'.")
+            wait_for_index(notes_collection, ATLAS_LUCENE_INDEX_NAME)
+        else:
+            print(f"✅ Atlas Lucene Search index '{ATLAS_LUCENE_INDEX_NAME}' already exists and is assumed to be ready.")
+
+    except Exception as e:
+        print(f"❌ An error occurred during index checks/creation: {e}")
+
+
 
 # --- User Management Setup ---
 login_manager = LoginManager()
@@ -125,6 +233,23 @@ def send_notification_email(contributor_label, project_name, content_snippet, to
 # ----------------------------------------------------------------------
 # --- AI Helper Functions ---
 # ----------------------------------------------------------------------
+
+# --- NEW: AI Helper for Embeddings ---
+def get_embedding(text, model="text-embedding-3-small"):
+    """Generates a vector embedding for a given text using OpenAI."""
+    if not openai.api_key:
+        print("WARNING: OpenAI API key not set, cannot generate embeddings.")
+        return None
+    try:
+        # Sanitize text for the embedding model
+        text = text.replace("\n", " ").strip()
+        if not text:
+            return None
+        return openai.embeddings.create(input=[text], model=model).data[0].embedding
+    except Exception as e:
+        print(f"❌ Error calling OpenAI for embedding: {e}")
+        return None
+
 
 def get_ai_follow_ups(project_goal, original_prompt, entry_content):
     if not openai.api_key: return []
@@ -274,20 +399,8 @@ def logout():
 @app.route('/')
 @login_required
 def index():
-    # --- START DEBUGGING ---
-    print(f"✅ [DEBUG] In index() for user: {current_user.id}")
-    
-    # Convert to ObjectId for the query
     user_object_id = ObjectId(current_user.id)
-    print(f"✅ [DEBUG] Querying for user_id: {user_object_id}")
-
-    # Run the query
     all_projects = list(projects_collection.find({'user_id': user_object_id}).sort("created_at", -1))
-    
-    print(f"✅ [DEBUG] Found {len(all_projects)} projects for this user.")
-    if len(all_projects) > 0:
-        print(f"✅ [DEBUG] First project name: {all_projects[0].get('name')}")
-    # --- END DEBUGGING ---
 
     for p in all_projects:
         p['_id'] = str(p['_id'])
@@ -313,7 +426,8 @@ def project_view(project_id):
         project['_id'] = str(project['_id'])
         project['project_type'] = project.get('project_type', 'story')
         
-        return render_template('project.html', project=project, story_tones=STORY_TONES, quizzes=quizzes)
+        # --- NEW: Pass IS_ATLAS flag to the template ---
+        return render_template('project.html', project=project, story_tones=STORY_TONES, quizzes=quizzes, is_atlas=IS_ATLAS)
 
     except Exception:
         flash("Invalid Project ID.", "error")
@@ -432,6 +546,7 @@ def create_project():
     return jsonify({"status": "success", "project": project_doc}), 201
 
 
+# --- MODIFIED: The add_note endpoint now creates embeddings ---
 @app.route('/api/notes', methods=['POST'])
 def add_note():
     data = request.get_json()
@@ -484,6 +599,15 @@ def add_note():
         'timestamp': datetime.datetime.utcnow(), 'contributor_label': contributor_label,
         'answered_prompt': active_prompt, 'tags': tags
     }
+
+    # --- NEW: Generate and add embedding if using Atlas ---
+    if IS_ATLAS:
+        embedding = get_embedding(content)
+        if embedding:
+            new_note_doc['content_embedding'] = embedding
+        else:
+            print(f"WARNING: Failed to generate embedding for new note in project {project_id}")
+
     result = notes_collection.insert_one(new_note_doc)
     new_note_doc['_id'] = str(result.inserted_id)
     new_note_doc['project_id'] = str(new_note_doc['project_id'])
@@ -496,6 +620,9 @@ def add_note():
             send_notification_email(contributor_label, project['name'], content, token_for_email, project_owner['email'], is_shared=is_shared)
     
     del new_note_doc['user_id']
+    if 'content_embedding' in new_note_doc:
+        del new_note_doc['content_embedding'] # Don't send the large vector to the client
+
     return jsonify({"status": "success", "note": new_note_doc, "new_follow_ups": new_follow_ups}), 201
 
 
@@ -567,33 +694,217 @@ def suggest_tags():
     return jsonify({"tags": suggested_tags})
 
 
-@app.route('/api/search-notes/<project_id>')
-@login_required
-def search_notes(project_id):
-    try:
-        search_query, tags_filter = request.args.get('q', ''), request.args.get('tags', '')
-        page = int(request.args.get('page', 1))
-        per_page = 20
-        query = {'project_id': ObjectId(project_id), 'user_id': ObjectId(current_user.id)}
-        if search_query: query['$text'] = {'$search': search_query}
-        if tags_filter: query['tags'] = {'$all': [tag.strip() for tag in tags_filter.split(',')]}
 
-        total_notes = notes_collection.count_documents(query)
-        total_pages = (total_notes + per_page - 1) // per_page
-        notes_cursor = notes_collection.find(query).sort("timestamp", 1).skip((page - 1) * per_page).limit(per_page)
 
+
+@app.route('/api/search-notes/<project_id>')  
+@login_required  
+def search_notes(project_id):  
+    try:  
+        # --- Configuration Constants ---  
+        ATLAS_SEARCH_LIMIT = 400  
+        ATLAS_NUM_CANDIDATES = 1000  
+  
+        # --- 1. Gather Inputs ---  
+        search_query = request.args.get('q', '').strip()  
+        tags_filter = request.args.get('tags', '').strip()  
+        search_type = request.args.get('search_type', 'text').strip().lower()  
+        page = int(request.args.get('page', 1))  
+        per_page = 20  
+  
+        # --- 2. Build Base MQL Filter ---  
+        current_project_id = ObjectId(project_id)  
+        current_user_id = ObjectId(current_user.id)  
+          
+        base_mql_filter = {  
+            'project_id': current_project_id,  
+            'user_id': current_user_id  
+        }  
+          
+        tags_list = []  
+        if tags_filter:  
+            tags_list = [tag.strip().lower() for tag in tags_filter.split(',') if tag.strip()]  
+  
+        total_notes = 0
         notes_data = []
-        for note in notes_cursor:
-            note['_id'] = str(note['_id'])
-            note['project_id'] = str(note['project_id'])
-            note['user_id'] = str(note['user_id'])
-            notes_data.append(note)
 
-        return jsonify(
-            {"notes": notes_data, "total_pages": total_pages, "current_page": page, "total_notes": total_notes})
-    except Exception as e:
-        print(f"Error in /search-notes: {e}")
-        return jsonify({"error": "An internal error occurred"}), 500
+        # --- 3. Handle Search Logic: Atlas vs. Standard MongoDB ---  
+        if IS_ATLAS:  
+            pipeline = []  
+              
+            use_vector_search = (  
+                search_query    
+                and search_type == 'vector'    
+                and not tags_list  
+            )  
+  
+            if use_vector_search:  
+                # Case 1: Vector Search
+                query_vector = get_embedding(search_query)  
+                if not query_vector:  
+                    return jsonify({"error": "Failed to generate a vector for the search query."}), 500  
+                      
+                vector_simple_filter = {  
+                    'project_id': current_project_id,  
+                    'user_id': current_user_id  
+                }  
+                      
+                pipeline.append({  
+                    '$vectorSearch': {  
+                        'index': ATLAS_VECTOR_SEARCH_INDEX_NAME,  
+                        'path': 'content_embedding',  
+                        'queryVector': query_vector,  
+                        'numCandidates': ATLAS_NUM_CANDIDATES,  
+                        'limit': ATLAS_SEARCH_LIMIT,  
+                        'filter': vector_simple_filter  
+                    }  
+                })  
+                # Project for vector score (exposed as 'score')
+                pipeline.append({  
+                    '$project': {  
+                        'score': {'$meta': 'vectorSearchScore'},  
+                        'content': 1, 'timestamp': 1, 'tags': 1,    
+                        'contributor_label': 1, 'project_id': 1, 'user_id': 1  
+                    }  
+                })  
+                pipeline.append({'$sort': {'score': -1}})  
+
+            elif search_query or tags_list:
+                # Case 2: Full-Text Search using $search (Corrected with $project for score)
+                
+                must_conditions = []  
+                  
+                if search_query:  
+                    must_conditions.append({  
+                        'text': {  
+                            'query': search_query,  
+                            'path': 'content'  
+                        }  
+                    })  
+                  
+                if tags_list:  
+                    for tag in tags_list:  
+                        must_conditions.append({  
+                            'text': {  
+                                'query': tag,   
+                                'path': 'tags'  
+                            }  
+                        })  
+  
+                filter_conditions = [  
+                    {'equals': {'path': 'project_id', 'value': current_project_id}},  
+                    {'equals': {'path': 'user_id', 'value': current_user_id}}  
+                ]  
+  
+                search_stage = {  
+                    '$search': {  
+                        'index': ATLAS_LUCENE_INDEX_NAME,  
+                        'compound': {  
+                            'filter': filter_conditions,  
+                            **({'must': must_conditions} if must_conditions else {})
+                        },
+                        # scoreDetails is not strictly required but can be left
+                        'scoreDetails': True 
+                    }  
+                }  
+  
+                pipeline.append(search_stage)  
+                
+                # --- FIX: Project the search score BEFORE sorting ---
+                pipeline.append({  
+                    '$project': {  
+                        '_id': 1, 'content': 1, 'timestamp': 1, 'tags': 1,    
+                        'contributor_label': 1, 'project_id': 1, 'user_id': 1,
+                        'search_score': {'$meta': 'searchScore'} # Expose the score here
+                    }
+                })
+                
+                if ATLAS_SEARCH_LIMIT:  
+                    pipeline.append({'$limit': ATLAS_SEARCH_LIMIT})  
+                      
+                if must_conditions:
+                    # Sort by the new projected field
+                    pipeline.append({'$sort': {'search_score': -1}})
+                else:
+                    pipeline.append({'$sort': {'timestamp': -1}})
+
+            
+            if pipeline:  
+                # Get total count of matching documents
+                count_pipeline = pipeline[:] + [{'$count': 'total'}]  
+                total_notes_doc = next(notes_collection.aggregate(count_pipeline), {})  
+                total_notes = total_notes_doc.get('total', 0)  
+  
+                # Apply pagination
+                pipeline.extend([  
+                    {'$skip': (page - 1) * per_page},    
+                    {'$limit': per_page}  
+                ])  
+                notes_data = list(notes_collection.aggregate(pipeline))  
+            
+            else:  
+                # Case 3 (Atlas): No search query or tags (Pure MQL fallback)  
+                total_notes = notes_collection.count_documents(base_mql_filter)  
+                notes_data = list(  
+                    notes_collection.find(base_mql_filter)  
+                    .sort("timestamp", -1)  
+                    .skip((page-1)*per_page)  
+                    .limit(per_page)  
+                )
+                
+            total_pages = (total_notes + per_page - 1) // per_page
+                      
+        else:  
+            # --- STANDARD MONGODB FALLBACK LOGIC (for non-Atlas) ---  
+            query = base_mql_filter.copy()  
+            
+            if tags_list:  
+                 query['tags'] = {'$all': tags_list} 
+
+            if search_query:  
+                query['$text'] = {'$search': search_query}  
+                  
+            total_notes = notes_collection.count_documents(query)  
+            total_pages = (total_notes + per_page - 1) // per_page  
+            notes_data = list(  
+                notes_collection.find(query)  
+                .sort("timestamp", -1)  
+                .skip((page - 1) * per_page)  
+                .limit(per_page)  
+            )  
+  
+        # --- 4. Format Results ---  
+        for note in notes_data:  
+            timestamp = note.get('timestamp', datetime.datetime.utcnow())  
+              
+            note['_id'] = str(note['_id'])  
+            note['project_id'] = str(note.get('project_id', project_id))  
+            note['user_id'] = str(note.get('user_id', current_user.id))  
+              
+            note['formatted_timestamp'] = timestamp.strftime('%B %d, %Y, %-I:%M %p')  
+  
+        return jsonify({  
+            "notes": notes_data,    
+            "total_pages": total_pages,    
+            "current_page": page,    
+            "total_notes": total_notes  
+        })  
+  
+    except OperationFailure as e:  
+        import traceback  
+        traceback.print_exc()  
+        print(f"❌ MongoDB Operation Failure in /search-notes: {e.details}")  
+        return jsonify({  
+            "error": "A database operation failed. The search index may still be building or a query is malformed.",    
+            "details": str(e.details)  
+        }), 500  
+    except Exception as e:  
+        import traceback  
+        traceback.print_exc()  
+        print(f"❌ Unhandled Error in /search-notes: {e}")  
+        return jsonify({"error": f"An internal server error occurred: {str(e)}"}), 500
+
+
 
 
 @app.route('/api/get-tags/<project_id>')
@@ -652,11 +963,19 @@ def generate_notes():
             'contributor_label': 'AI Assistant',
             'tags': ['ai-generated', topic.lower().replace(' ', '-')]
         }
+        # --- NEW: Generate embedding for AI notes ---
+        if IS_ATLAS:
+            embedding = get_embedding(content)
+            if embedding:
+                note_doc['content_embedding'] = embedding
+
         result = notes_collection.insert_one(note_doc)
         note_doc['_id'] = str(result.inserted_id)
         note_doc['project_id'] = str(note_doc['project_id'])
         note_doc['user_id'] = str(note_doc['user_id'])
         note_doc['formatted_timestamp'] = note_doc['timestamp'].strftime('%B %d, %Y, %-I:%M %p')
+        if 'content_embedding' in note_doc:
+            del note_doc['content_embedding']
         new_notes_docs.append(note_doc)
 
     return jsonify({"status": "success", "notes": new_notes_docs})
@@ -744,5 +1063,7 @@ def generate_story():
 
 
 if __name__ == '__main__':
+    # --- MODIFIED: Call the index creation logic at startup ---
+    ensure_atlas_indexes()
     app.static_folder = 'static'
     app.run(host='0.0.0.0', port=5001, debug=True)
