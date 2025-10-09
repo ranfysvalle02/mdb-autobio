@@ -22,7 +22,7 @@ document.addEventListener('DOMContentLoaded', () => {
     let quizGenerationOptions = {};
     let selectedNotes = []; // Holds full note objects for API calls
     let noteSelectionCandidates = new Map(); // Caches notes for the selection modal
-    let previewState = { searchQuery: '', selectedTags: [], currentPage: 1, totalPages: 1, searchType: 'text' };
+    let previewState = { searchQuery: '', selectedTags: [], currentPage: 1, totalPages: 1, searchType: 'vector' };
 
     // --- CORE LOGIC ---
 
@@ -498,7 +498,7 @@ document.addEventListener('DOMContentLoaded', () => {
     function resetAndOpenNoteSelector(title) {
         selectedNotes = [];
         noteSelectionCandidates.clear();
-        previewState = { searchQuery: '', selectedTags: [], currentPage: 1, totalPages: 1, searchType: 'text' };
+        previewState = { searchQuery: '', selectedTags: [], currentPage: 1, totalPages: 1, searchType: 'vector' };
         
         const searchTypeContainer = document.getElementById('search-type-selector-container');
         if (isAtlas) {
@@ -510,7 +510,7 @@ document.addEventListener('DOMContentLoaded', () => {
         document.getElementById('note-selection-title').textContent = title;
         updateSelectedNotesUI();
         document.getElementById('preview-search-input').value = '';
-        document.getElementById('preview-search-type').value = 'text'; // Reset to default
+        document.getElementById('preview-search-type').value = 'vector'; // Reset to default
         fetchAndRenderTags();
         fetchAndRenderPreviewNotes();
         document.getElementById('note-selection-modal').classList.remove('hidden');
