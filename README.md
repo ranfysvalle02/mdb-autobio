@@ -96,6 +96,36 @@ The `generate-quiz` endpoint is a brilliant example of this philosophy. A user c
 
 -----
 
+I'd be happy to explain the functionality you were looking for!
+
+The **"Invite & Share"** section you missed is the mechanism for generating a public or private link that other people can use to submit notes to your project without needing an account. I included it in the section I added to the HTML template so you can now see and manage all your generated invite links.
+
+---
+
+## The "Invite & Share" Functionality
+
+This section serves two main purposes in your project view: generating new contributor links and viewing/managing the links you've already created.
+
+### 1. Generating New Invite Links
+
+This is handled by the form labeled **"Invite & Share"** (the original form you looked for):
+
+| Input Field | Purpose | Resulting Link Type |
+| :--- | :--- | :--- |
+| **Contributor's Name** (`contributor-label-input`) | The specific label given to the person contributing (e.g., "Aunt Margaret"). This helps you quickly identify who wrote the note later. | **Specific Invite** (`invited_users`): Used when you want to track a specific person's contributions. |
+| **Prompt** (`prompt-textarea`) | The question or topic you want the contributor to respond to (e.g., "What do you remember about the summer of '82?"). | Both |
+
+When you click **"Generate Invite Link"** after filling out the name and prompt, the system creates a **Specific Invite**. You can also use the "Invite & Share" card to generate a **Shared Invite** link for general sharing if you've implemented the `generate_shared_token` API call on the front end (the current HTML only shows the form for the Specific Invite).
+
+### 2. Viewing and Managing Existing Links
+
+This is the new section I added to the HTML template, labeled **"Generated Invitations & Share Links"**:
+
+* **Specific Invite:** These cards show the name of the person you invited and the exact prompt you gave them. This is useful for memory projects where you want targeted input. The link they use remains active until you manually remove it from the database (a feature that would require additional API endpoints to fully implement).
+* **Open Share:** These cards typically show a more general prompt and the link is intended to be shared widely.
+* **Copy Link Button:** This allows you to easily copy the unique, pre-generated URL to send to your contributor, eliminating the need to use the form again if you lose the link.
+
+
 ### **APPENDIX A: Under the Hood (Collection)**
 
 This conversational loop is powered by the Python backend. When a note is submitted via an invite link, the `/api/notes` endpoint in `app.py` triggers the `get_ai_follow_ups` function. This function sends the project's goal and the user's new entry to an AI model with a clear directive: *"Generate 3 insightful, open-ended follow-up questions to encourage deeper exploration."* The generated questions are then saved and displayed to the contributor, creating a seamless conversational experience.

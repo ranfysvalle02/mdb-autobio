@@ -408,6 +408,8 @@ def index():
     return render_template('index.html', projects=all_projects)
 
 
+# app.py
+
 @app.route('/project/<project_id>')
 @login_required
 def project_view(project_id):
@@ -423,17 +425,36 @@ def project_view(project_id):
         for quiz in quizzes:
             quiz['_id'] = str(quiz['_id'])
 
+        # --- NEW: Fetch all invited_users and shared_invites ---
+        invited_users = list(invited_users_collection.find({"project_id": project_obj_id}).sort("created_at", -1))
+        for invite in invited_users:
+            invite['_id'] = str(invite['_id'])
+            invite['invite_url'] = url_for('invite_note', token=invite['token'], _external=True)
+
+        shared_invites = list(shared_invites_collection.find({"project_id": project_obj_id}).sort("created_at", -1))
+        for invite in shared_invites:
+            invite['_id'] = str(invite['_id'])
+            invite['shared_url'] = url_for('shared_invite_page', token=invite['token'], _external=True)
+
+
         project['_id'] = str(project['_id'])
         project['project_type'] = project.get('project_type', 'story')
         
-        # --- NEW: Pass IS_ATLAS flag to the template ---
-        return render_template('project.html', project=project, story_tones=STORY_TONES, quizzes=quizzes, is_atlas=IS_ATLAS)
+        # --- MODIFIED: Pass new variables to the template ---
+        return render_template(
+            'project.html', 
+            project=project, 
+            story_tones=STORY_TONES, 
+            quizzes=quizzes, 
+            is_atlas=IS_ATLAS,
+            invited_users=invited_users, # NEW
+            shared_invites=shared_invites # NEW
+        )
 
     except Exception:
         flash("Invalid Project ID.", "error")
         return redirect(url_for('index'))
-
-
+        
 @app.route('/invite/<token>')
 def invite_note(token):
     invited_user = invited_users_collection.find_one({"token": token})

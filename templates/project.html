@@ -3,8 +3,8 @@
 {% block title %}{{ project.name }} - Story Weaver{% endblock %}
 
 {% block content %}
-<div id="js-data" 
-    data-project-id="{{ project._id }}" 
+<div id="js-data"
+    data-project-id="{{ project._id }}"
     data-project-name="{{ project.name }}"
     data-project-type="{{ project.project_type }}"
     data-is-atlas="{{ is_atlas }}">
@@ -60,7 +60,7 @@
         <h3 class="text-2xl font-bold mb-5 flex items-center gap-3"><span class="text-3xl">🤖</span> AI Actions & Search</h3>
         <p class="text-slate-600 mb-6">Select notes from your project to search, manage, weave them into a story, or generate a practice quiz.</p>
         <div class="flex flex-col sm:flex-row items-stretch gap-4">
-            
+
             <div class="flex-shrink-0 self-end">
                  <button type="button" id="launch-search-btn" class="btn btn-primary w-full sm:w-auto h-12 whitespace-nowrap" style="display: none;">Search & Manage</button>
             </div>
@@ -75,14 +75,14 @@
             <div class="flex-shrink-0 self-end">
                 <button type="button" id="launch-story-builder-btn" class="btn btn-secondary w-full sm:w-auto h-12 whitespace-nowrap">Weave a Story</button>
             </div>
-            
+
             <div class="border-t sm:border-t-0 sm:border-l border-slate-200"></div>
             <div class="flex-shrink-0 self-end">
                  <button type="button" data-modal-target="quiz-options-modal" class="btn btn-accent w-full sm:w-auto h-12 whitespace-nowrap">Generate a Quiz</button>
             </div>
         </div>
     </div>
-    
+
     {% if quizzes %}
     <div id="project-quizzes">
         <h3 class="text-4xl font-bold mb-8">Generated Quizzes</h3>
@@ -105,7 +105,55 @@
         </div>
     </div>
     {% endif %}
-    
+
+    {# START OF NEW SECTION: INVITATIONS UX #}
+    {% if invited_users or shared_invites %}
+    <div id="project-invitations">
+        <h3 class="text-4xl font-bold mb-8">Generated Invitations & Share Links</h3>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+
+            {# 1. Display Invited Users (Specific Contributor/Prompt) #}
+            {% for invite in invited_users %}
+            <div class="content-card flex flex-col">
+                <div class="flex-grow">
+                    <div class="flex justify-between items-start">
+                        <h4 class="text-xl font-bold text-slate-800">{{ invite.label }}</h4>
+                        <span class="text-xs font-semibold bg-indigo-100 text-indigo-800 px-2 py-1 rounded-full">Specific Invite</span>
+                    </div>
+                    <p class="text-sm text-slate-600 italic mt-2">Prompt: "{{ invite.prompt }}"</p>
+                    <p class="text-xs text-slate-500 mt-1 mb-4">Created: {{ invite.created_at.strftime('%B %d, %Y, %-I:%M %p') }}</p>
+                </div>
+                <div class="flex items-center justify-end gap-3 mt-4 pt-4 border-t">
+                    <input type="text" readonly value="{{ invite.invite_url }}" class="form-input-minimal flex-grow text-xs truncate">
+                    <button class="btn btn-primary text-sm py-2 px-4 copy-link-btn" data-url="{{ invite.invite_url }}">Copy Link</button>
+                </div>
+                {# The 'copy-link-btn' requires JS for functionality, which is assumed to exist #}
+            </div>
+            {% endfor %}
+
+            {# 2. Display Shared Invites (General Link) #}
+            {% for invite in shared_invites %}
+            <div class="content-card flex flex-col">
+                <div class="flex-grow">
+                    <div class="flex justify-between items-start">
+                        <h4 class="text-xl font-bold text-slate-800">Share Link</h4>
+                        <span class="text-xs font-semibold bg-green-100 text-green-800 px-2 py-1 rounded-full">Open Share</span>
+                    </div>
+                    <p class="text-sm text-slate-600 italic mt-2">Prompt: "{{ invite.prompt }}"</p>
+                    <p class="text-xs text-slate-500 mt-1 mb-4">Created: {{ invite.created_at.strftime('%B %d, %Y, %-I:%M %p') }}</p>
+                </div>
+                <div class="flex items-center justify-end gap-3 mt-4 pt-4 border-t">
+                    <input type="text" readonly value="{{ invite.shared_url }}" class="form-input-minimal flex-grow text-xs truncate">
+                    <button class="btn btn-primary text-sm py-2 px-4 copy-link-btn" data-url="{{ invite.shared_url }}">Copy Link</button>
+                </div>
+            </div>
+            {% endfor %}
+
+        </div>
+    </div>
+    {% endif %}
+    {# END OF NEW SECTION #}
+
     <div id="project-notes">
         <div class="flex flex-col sm:flex-row sm:justify-between items-start sm:items-center mb-8 space-y-4 sm:space-y-0">
             <h3 class="text-4xl font-bold">Project Notes</h3>
@@ -134,7 +182,7 @@
             <main class="flex-grow flex flex-col md:flex-row overflow-hidden">
                 <aside class="w-full md:w-1/4 p-4 border-r overflow-y-auto">
                     <h4 class="font-semibold mb-2">Search & Filter</h4>
-                    
+
                     <div id="search-type-selector-container" class="mb-4 hidden">
                         <label for="preview-search-type" class="block text-sm font-medium text-slate-700 mb-1">Search Type</label>
                         <select id="preview-search-type" class="form-select">
