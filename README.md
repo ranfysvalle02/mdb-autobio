@@ -2,6 +2,8 @@
 
 ---
 
+![](weaver-1.png)
+
 # The Alchemy of AI: Turning Raw Notes into Actionable Knowledge
 
 We are all drowning in information. Meeting notes, article highlights, team feedback, random shower thoughts—we are prolific collectors of digital fragments. But collection is the easy part. The real work, the alchemy that turns lead into gold, is transforming that chaotic heap of raw data into something cohesive, understandable, and, most importantly, *useful*.
@@ -52,6 +54,8 @@ This dual approach ensures the AI suggests tags that are not only relevant but a
 
 ## Stage 3: The Narrative Weaver — From Bullet Points to a Coherent Story
 
+![](weave-story.png)
+
 With a well-structured collection of notes, the next challenge is to see the forest for the trees. The `generate-story` endpoint is the system's narrative engine, designed to weave disparate notes into a single, coherent piece of prose.
 
 The front-end, detailed in `main.js`, provides a powerful note-selection modal where the user acts as a **curator**. Using search, tag filters, and pagination, they can hand-select the exact "ingredients" for their narrative. This curated context is then sent to the AI with two parameters: the content and a desired **tone** (e.g., "Nostalgic & Warm," "Hardboiled Detective," or "Formal & Academic").
@@ -71,6 +75,8 @@ The AI's prompt is explicit: `"Synthesize these notes... into a short narrative.
 -----
 
 ## Stage 4: The Knowledge Activator — From Passive Info to Active Tools
+
+![](weave-quiz.png)
 
 Knowledge is useless if it just sits in a vault. True mastery comes from actively engaging with it. The Insight Engine excels at this final, crucial step: transforming passive information into interactive, actionable tools.
 
