@@ -9,3 +9,9 @@ python-dotenv  # Recommended for managing environment variables (like OPENAI_API
 
 # OpenAI API Client
 openai
+
+# flask login import
+flask-login
+
+werkzeug
+

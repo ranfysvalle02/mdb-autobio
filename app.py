@@ -776,18 +776,20 @@ def search_notes(project_id):
                   
                 if search_query:  
                     must_conditions.append({  
-                        'text': {  
-                            'query': search_query,  
-                            'path': 'content'  
+                        'wildcard': {  
+                            'query': search_query + '*',  # Wildcard for partial matches
+                            'path': 'content',
+                            "allowAnalyzedField": True
                         }  
                     })  
                   
                 if tags_list:  
                     for tag in tags_list:  
                         must_conditions.append({  
-                            'text': {  
-                                'query': tag,   
-                                'path': 'tags'  
+                            'wildcard': {  
+                                'query': tag + '*',  # Wildcard for partial matches
+                                'path': 'tags',
+                                "allowAnalyzedField": True
                             }  
                         })  
   
@@ -810,7 +812,6 @@ def search_notes(project_id):
   
                 pipeline.append(search_stage)  
                 
-                # --- FIX: Project the search score BEFORE sorting ---
                 pipeline.append({  
                     '$project': {  
                         '_id': 1, 'content': 1, 'timestamp': 1, 'tags': 1,    
@@ -841,7 +842,7 @@ def search_notes(project_id):
                     {'$limit': per_page}  
                 ])  
                 notes_data = list(notes_collection.aggregate(pipeline))  
-            
+                print(f"🔍 Atlas Search Pipeline: {json.dumps(pipeline, default=str)}")
             else:  
                 # Case 3 (Atlas): No search query or tags (Pure MQL fallback)  
                 total_notes = notes_collection.count_documents(base_mql_filter)  
