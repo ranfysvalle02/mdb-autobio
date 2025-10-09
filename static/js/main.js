@@ -4,440 +4,515 @@ document.addEventListener('DOMContentLoaded', () => {
     const jsData = document.getElementById('js-data');
     const projectId = jsData?.dataset.projectId;
     const projectName = jsData?.dataset.projectName;
-    const inviteToken = jsData?.dataset.inviteToken;
-    const activePrompt = jsData?.dataset.activePrompt;
-
-    // Determine current page/view
-    const isWorkspaceView = document.getElementById('new-project-form');
-    const isProjectView = !isWorkspaceView && projectId && !inviteToken;
-    const isInviteView = !isWorkspaceView && projectId && inviteToken;
-
+    
+    // Determine current page/view to attach correct listeners
+    const isWorkspaceView = !!document.getElementById('new-project-form');
+    const isProjectView = !!document.getElementById('project-notes') && !!projectId;
+    const isInviteView = !!document.getElementById('invite-note-form'); // Assuming you add this ID
+    
+    // State for project view
     let currentPage = 1;
     let isLoading = false;
     let hasMorePages = true;
     let searchDebounceTimer;
     
-    let storyCandidates = { notes: new Map(), selectedNotes: new Map() };
+    // State for modals and AI actions
+    let activeAIAction = null;
+    let quizGenerationOptions = {};
+    let selectedNotes = []; // Holds full note objects for API calls
+    let noteSelectionCandidates = new Map(); // Caches notes for the selection modal
     let previewState = { searchQuery: '', selectedTags: [], currentPage: 1, totalPages: 1 };
-    
-    // --- ELEMENT SELECTORS ---
-    // Universal: Intersection Observer for card animations
-    const observer = new IntersectionObserver((entries) => {
-        entries.forEach(entry => {
-            if (entry.isIntersecting) {
-                entry.target.classList.add('reveal');
-                observer.unobserve(entry.target);
+
+    // --- ELEMENT SELECTORS (lazy-loaded in functions) ---
+
+    // --- CORE LOGIC ---
+
+    function initializePage() {
+        if (isWorkspaceView) {
+            setupWorkspaceView();
+        }
+        if (isProjectView) {
+            setupProjectView();
+        }
+        if (isInviteView) {
+            // Setup for invite page if needed
+        }
+        setupGlobalListeners();
+    }
+
+    // --- VIEW-SPECIFIC SETUP ---
+
+    function setupWorkspaceView() {
+        const newProjectForm = document.getElementById('new-project-form');
+        newProjectForm?.addEventListener('submit', handleNewProjectSubmit);
+    }
+
+    function setupProjectView() {
+        // AI Action Launchers
+        document.getElementById('launch-story-builder-btn')?.addEventListener('click', () => {
+            activeAIAction = 'generate-story';
+            resetAndOpenNoteSelector('Select Notes to Weave a Story');
+        });
+
+        const quizOptionsForm = document.getElementById('quiz-options-form');
+        quizOptionsForm?.addEventListener('submit', (e) => {
+            e.preventDefault();
+            activeAIAction = 'generate-quiz';
+            quizGenerationOptions = {
+                num_questions: document.getElementById('quiz-num-questions').value,
+                question_type: document.getElementById('quiz-question-type').value,
+                difficulty: document.getElementById('quiz-difficulty').value,
+                knowledge_source: document.querySelector('input[name="knowledge_source"]:checked').value,
+            };
+            document.getElementById('quiz-options-modal').classList.add('hidden');
+            resetAndOpenNoteSelector('Select Notes for Quiz');
+        });
+
+        // Note & Token Forms
+        document.getElementById('note-form')?.addEventListener('submit', handleNoteFormSubmit);
+        document.getElementById('token-form')?.addEventListener('submit', handleTokenFormSubmit);
+        document.getElementById('generate-notes-form')?.addEventListener('submit', handleGenerateNotesSubmit);
+        document.getElementById('suggest-tags-btn')?.addEventListener('click', handleSuggestTags);
+        document.getElementById('contributor-filter')?.addEventListener('change', () => fetchNotes(true));
+
+        // Note Selection Modal Logic
+        document.getElementById('confirm-action-btn')?.addEventListener('click', handleConfirmAction);
+        const previewNotesContainer = document.getElementById('preview-notes-container');
+        previewNotesContainer?.addEventListener('change', handleNoteCheckboxChange);
+        document.getElementById('preview-search-input')?.addEventListener('input', (e) => {
+            clearTimeout(searchDebounceTimer);
+            searchDebounceTimer = setTimeout(() => {
+                previewState.searchQuery = e.target.value;
+                previewState.currentPage = 1;
+                fetchAndRenderPreviewNotes();
+            }, 500);
+        });
+        document.getElementById('preview-tags-container')?.addEventListener('change', () => {
+             previewState.selectedTags = Array.from(document.querySelectorAll('#preview-tags-container .tag-checkbox:checked')).map(cb => cb.value);
+             previewState.currentPage = 1;
+             fetchAndRenderPreviewNotes();
+        });
+         document.getElementById('preview-pagination-container')?.addEventListener('click', (e) => {
+            if (e.target.matches('.pagination-btn') && !e.target.disabled) {
+                previewState.currentPage = parseInt(e.target.dataset.page, 10);
+                fetchAndRenderPreviewNotes();
             }
         });
-    }, { threshold: 0.1 });
 
-    // Workspace View
-    const newProjectForm = document.getElementById('new-project-form');
-    const projectsContainer = document.getElementById('projects-container');
-    const noProjectsMessage = document.getElementById('no-projects-message');
-    
-    // Project & Invite Views
-    const noteForm = document.getElementById('note-form');
-    
-    // Project View
-    const tokenForm = document.getElementById('token-form');
-    const sharedTokenForm = document.getElementById('shared-token-form');
-    const notesContainer = document.getElementById('notes-container');
-    const loadingIndicator = document.getElementById('loading-indicator');
-    const contributorFilter = document.getElementById('contributor-filter');
-    const generateStoryBtn = document.getElementById('generate-story-btn');
-    const suggestTagsBtn = document.getElementById('suggest-tags-btn');
-    const tagSuggestionsContainer = document.getElementById('tag-suggestions-container');
-    
-    // Invite View
-    const followUpContainer = document.getElementById('follow-up-container');
-    const followUpList = document.getElementById('follow-up-list');
-    
-    // Modals (Project View)
-    const storyModal = document.getElementById('story-modal');
-    const storyModalTitle = document.getElementById('story-modal-title');
-    const storyModalContent = document.getElementById('story-modal-content');
-    const storyPreviewModal = document.getElementById('story-preview-modal');
-    const confirmStoryGenerationBtn = document.getElementById('confirm-story-generation-btn');
-    const previewSearchInput = document.getElementById('preview-search-input');
-    const previewTagsContainer = document.getElementById('preview-tags-container');
-    const selectedNotesContainer = document.getElementById('selected-notes-container');
-    const selectedNotesCount = document.getElementById('selected-notes-count');
-    const previewPaginationContainer = document.getElementById('preview-pagination-container');
-    const previewResultsSummary = document.getElementById('preview-results-summary');
-    const previewNotesContainer = document.getElementById('preview-notes-container');
-    const storyPreviewTitle = document.getElementById('story-preview-title');
+        // Initial data load for project page
+        populateContributors();
+        fetchNotes();
+        window.addEventListener('scroll', () => {
+            if (!isLoading && hasMorePages && (window.innerHeight + window.scrollY) >= document.body.offsetHeight - 500) {
+                fetchNotes();
+            }
+        });
+    }
 
-    // --- CORE FUNCTIONS ---
-    
-    const renderNote = (note, prepend = false) => {
-        if (!notesContainer) return;
-        const noteCard = document.createElement('div');
-        noteCard.className = 'card-reveal note-card';
-        const tagsHTML = note.tags?.length > 0 ? note.tags.map(t => `<span class="inline-block bg-sky-100 text-sky-800 text-xs font-semibold px-2.5 py-1 rounded-full">${t}</span>`).join('') : '';
-        noteCard.innerHTML = `
-            <div class="flex flex-wrap items-center gap-2 mb-3">
-                <span class="inline-block bg-pink-100 text-pink-800 text-xs font-semibold px-2.5 py-1 rounded-full">${note.contributor_label}</span>
-                ${tagsHTML}
-            </div>
-            <p class="text-xs text-slate-400 mb-3">${note.formatted_timestamp}</p>
-            <p class="text-slate-700 whitespace-pre-wrap leading-relaxed">${note.content}</p>
-        `;
-        if (prepend) notesContainer.prepend(noteCard);
-        else notesContainer.appendChild(noteCard);
-        observer.observe(noteCard);
-    };
+    function setupGlobalListeners() {
+        // Modal open/close logic
+        document.querySelectorAll('[data-modal-target]').forEach(trigger => {
+            trigger.addEventListener('click', () => {
+                const modal = document.getElementById(trigger.dataset.modalTarget);
+                modal?.classList.remove('hidden');
+            });
+        });
 
-    const fetchNotes = async (isNewFilter = false) => {
-        if (isLoading || !hasMorePages) return;
+        document.querySelectorAll('.modal-close-btn').forEach(button => {
+            button.addEventListener('click', () => {
+                button.closest('.fixed.inset-0').classList.add('hidden');
+            });
+        });
+        
+        // Share button clipboard functionality
+        document.body.addEventListener('click', async (e) => {
+            if (e.target.classList.contains('share-quiz-btn')) {
+                const url = e.target.dataset.url;
+                setButtonLoading(e.target, 'Copied!');
+                try {
+                    await navigator.clipboard.writeText(url);
+                } catch (err) {
+                    console.error('Failed to copy link:', err);
+                    alert('Could not copy link.');
+                } finally {
+                    setTimeout(() => setButtonActive(e.target, 'Share'), 2000);
+                }
+            }
+        });
+    }
+
+    // --- API & DATA FETCHING ---
+
+    async function fetchNotes(isNewFilter = false) {
+        if (isLoading || (!hasMorePages && !isNewFilter)) return;
         isLoading = true;
+        const notesContainer = document.getElementById('notes-container');
+        const loadingIndicator = document.getElementById('loading-indicator');
+
         if (isNewFilter) {
-            currentPage = 1; hasMorePages = true;
-            if (notesContainer) notesContainer.innerHTML = '';
+            currentPage = 1;
+            hasMorePages = true;
+            if(notesContainer) notesContainer.innerHTML = '';
         }
-        if (loadingIndicator) loadingIndicator.classList.remove('hidden');
-        const params = new URLSearchParams({ page: currentPage, contributor_filter: contributorFilter.value });
+        loadingIndicator?.classList.remove('hidden');
+
         try {
-            const response = await fetch(`/api/notes/${projectId}?${params}`);
+            const contributorFilter = document.getElementById('contributor-filter').value;
+            const response = await fetch(`/api/notes/${projectId}?page=${currentPage}&contributor_filter=${contributorFilter}`);
             if (!response.ok) throw new Error('Failed to fetch notes');
             const newNotes = await response.json();
+
             if (newNotes.length > 0) {
                 newNotes.forEach(note => renderNote(note));
                 currentPage++;
             } else {
                 hasMorePages = false;
-                if (currentPage === 1 && notesContainer && notesContainer.innerHTML === '') {
+                if (currentPage === 1 && notesContainer?.innerHTML === '') {
                     notesContainer.innerHTML = `<p class="text-slate-500 text-center col-span-full py-8">No notes found for this filter.</p>`;
                 }
             }
         } catch (error) {
             console.error('Failed to fetch notes:', error);
-            if (notesContainer && notesContainer.innerHTML === '') {
-                 notesContainer.innerHTML = `<p class="text-red-500 text-center col-span-full py-8">Could not load notes. Please refresh the page.</p>`;
-            }
+        } finally {
+            isLoading = false;
+            loadingIndicator?.classList.add('hidden');
         }
-        finally { isLoading = false; if (loadingIndicator) loadingIndicator.classList.add('hidden'); }
-    };
+    }
 
-    // --- EVENT HANDLERS ---
+    async function fetchAndRenderPreviewNotes() {
+        const { searchQuery, selectedTags, currentPage } = previewState;
+        const params = new URLSearchParams({ page: currentPage, q: searchQuery, tags: selectedTags.join(',') });
+        const previewNotesContainer = document.getElementById('preview-notes-container');
+        
+        try {
+            const response = await fetch(`/api/search-notes/${projectId}?${params}`);
+            const data = await response.json();
+            previewState.totalPages = data.total_pages;
 
-    const handleNoteFormSubmit = async (e) => {
+            previewNotesContainer.innerHTML = '';
+            if (data.notes.length === 0) {
+                previewNotesContainer.innerHTML = '<p class="text-slate-500 p-4">No notes found.</p>';
+            }
+            data.notes.forEach(note => {
+                noteSelectionCandidates.set(note._id, note);
+                previewNotesContainer.appendChild(createPreviewNoteElement(note));
+            });
+            renderPagination();
+            document.getElementById('preview-results-summary').textContent = `Showing page ${previewState.currentPage} of ${previewState.totalPages || 1}. (${data.total_notes} total)`;
+        } catch (error) { console.error('Failed to search notes:', error); }
+    }
+
+    // --- FORM SUBMISSION HANDLERS ---
+
+    async function handleNewProjectSubmit(e) {
+        e.preventDefault();
+        const name = e.target.querySelector('#project-name-input').value.trim();
+        const project_goal = e.target.querySelector('#project-goal-input').value.trim();
+        const project_type = e.target.querySelector('#project-type-select').value;
+        if (!name || !project_goal) return;
+
+        try {
+            const response = await fetch('/api/projects', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name, project_goal, project_type })
+            });
+            if (!response.ok) throw new Error('Project creation failed.');
+            const data = await response.json();
+
+            if (data.status === 'success') {
+                window.location.href = `/project/${data.project._id}`;
+            } else { alert(data.message); }
+        } catch (error) { console.error('Error creating project:', error); }
+    }
+
+    async function handleNoteFormSubmit(e) {
         e.preventDefault();
         const contentEl = document.getElementById('note-content');
         const content = contentEl.value.trim();
         if (!content) return;
         
-        const tags = isProjectView ? document.getElementById('note-tags-input').value : '';
-        const body = { content, project_id: projectId, tags, invite_token: inviteToken, active_prompt: activePrompt };
-        
+        const tags = document.getElementById('note-tags-input')?.value || '';
         try {
-            const response = await fetch('/api/notes', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+            const response = await fetch('/api/notes', { 
+                method: 'POST', 
+                headers: { 'Content-Type': 'application/json' }, 
+                body: JSON.stringify({ content, project_id: projectId, tags }) 
+            });
             if (!response.ok) throw new Error('Failed to add note');
             const result = await response.json();
             
             contentEl.value = '';
-            if (isInviteView) {
-                updateFollowUps(result.new_follow_ups);
-                document.getElementById('note-form').parentElement.innerHTML = `<div class="text-center p-8"><h3 class="text-2xl font-bold text-emerald-600">Thank you!</h3><p class="text-slate-600 mt-2">Your contribution has been added.</p></div>`;
-            } else {
-                if (document.getElementById('note-tags-input')) document.getElementById('note-tags-input').value = '';
-                if (tagSuggestionsContainer) tagSuggestionsContainer.innerHTML = '';
-                if (notesContainer.querySelector('p')) notesContainer.innerHTML = '';
-                renderNote(result.note, true);
-                populateContributors();
+            document.getElementById('note-tags-input').value = '';
+            document.getElementById('tag-suggestions-container').innerHTML = '';
+            if (document.querySelector('#notes-container p')) {
+                document.querySelector('#notes-container').innerHTML = '';
             }
+            renderNote(result.note, true); // Prepend new note
         } catch (error) {
             console.error('Error submitting note:', error);
             alert('A network error occurred. Please try again.');
         }
-    };
-
-    const handleNewProjectSubmit = async (e) => {
-        e.preventDefault();
-        const name = e.target.querySelector('#project-name-input').value.trim();
-        const project_goal = e.target.querySelector('#project-goal-input').value.trim();
-        if (!name || !project_goal) return;
-        try {
-            const response = await fetch('/api/projects', {
-                method: 'POST', headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ name, project_goal })
-            });
-            const data = await response.json();
-            if (data.status === 'success') {
-                const project = data.project;
-                const projectLink = document.createElement('a');
-                projectLink.href = `/project/${project._id}`;
-                projectLink.className = 'card-reveal project-card';
-                projectLink.innerHTML = `
-                    <h4 class="text-xl font-bold text-slate-800 truncate mb-2">${project.name}</h4>
-                    <p class="text-sm text-slate-600 italic border-l-2 border-pink-200 pl-3 mb-4">"${project.project_goal}"</p>
-                    <p class="text-xs text-slate-500 mt-auto pt-2 border-t border-slate-200/80">Created: ${new Date(project.created_at).toLocaleDateString()}</p>
-                `;
-                projectsContainer.prepend(projectLink);
-                observer.observe(projectLink);
-                e.target.reset();
-                if(noProjectsMessage) noProjectsMessage.remove();
-            } else { alert(data.message); }
-        } catch (error) { console.error('Error creating project:', error); }
-    };
+    }
     
-    const handleTokenFormSubmit = async (e) => {
-        e.preventDefault();
-        const label = e.target.querySelector('#contributor-label-input').value;
-        const prompt = e.target.querySelector('#prompt-textarea').value;
-        const resultDiv = document.getElementById('token-result');
-        try {
-            const response = await fetch('/api/generate-token', {
-                method: 'POST', headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ label, project_id: projectId, prompt })
-            });
-            const data = await response.json();
-            if (data.status === 'success') {
-                resultDiv.innerHTML = `<p class="text-sm text-slate-600 mb-2">Share this link with ${data.label}:</p><div class="flex space-x-2"><input type="text" readonly value="${data.invite_url}" class="form-input flex-grow p-2"><button type="button" class="btn btn-secondary copy-btn">Copy</button></div>`;
-                resultDiv.querySelector('.copy-btn').addEventListener('click', (copyEvent) => {
-                    navigator.clipboard.writeText(data.invite_url).then(() => {
-                        copyEvent.target.textContent = 'Copied!';
-                        setTimeout(() => { copyEvent.target.textContent = 'Copy'; }, 2000);
-                    });
-                });
-            } else { resultDiv.textContent = data.message || 'An error occurred.'; }
-        } catch (error) { console.error('Error generating token:', error); }
-    };
+    // --- AI ACTION HANDLERS ---
+    
+    function handleConfirmAction() {
+        if (selectedNotes.length === 0) {
+            alert("Please select at least one note.");
+            return;
+        }
+        if (activeAIAction === 'generate-quiz') {
+            handleGenerateQuiz();
+        } else if (activeAIAction === 'generate-story') {
+            handleGenerateStory();
+        }
+    }
 
-    const handleSharedTokenFormSubmit = async (e) => {
-        e.preventDefault();
-        const prompt = e.target.querySelector('#shared-prompt-textarea').value.trim();
-        const resultDiv = document.getElementById('shared-token-result');
-        if (!prompt || !projectId) return;
+    async function handleGenerateQuiz() {
+        const quizTitle = prompt("Enter a title for your new quiz:", "Practice Quiz");
+        if (!quizTitle) return;
 
+        setButtonLoading(document.getElementById('confirm-action-btn'), 'Generating...');
+        
         try {
-            const response = await fetch('/api/generate-shared-token', {
+            const response = await fetch('/api/generate-quiz', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ project_id: projectId, prompt })
+                body: JSON.stringify({
+                    notes: selectedNotes.map(n => ({_id: n._id, content: n.content})),
+                    title: quizTitle,
+                    num_questions: parseInt(quizGenerationOptions.num_questions, 10),
+                    question_type: quizGenerationOptions.question_type,
+                    difficulty: quizGenerationOptions.difficulty,
+                    knowledge_source: quizGenerationOptions.knowledge_source
+                }),
+            });
+
+            if (!response.ok) {
+                const errorData = await response.json();
+                throw new Error(errorData.error || 'Failed to generate quiz.');
+            }
+            
+            document.getElementById('note-selection-modal').classList.add('hidden');
+            alert('Quiz generated successfully! The page will now reload to show it in the list.');
+            window.location.reload();
+
+        } catch (error) {
+            console.error('Quiz Generation Error:', error);
+            alert(`Error: ${error.message}`);
+        } finally {
+            setButtonActive(document.getElementById('confirm-action-btn'), 'Confirm Selection');
+        }
+    }
+
+    async function handleGenerateStory() {
+        const selectedTone = document.getElementById('story-tone-select').value;
+        setButtonLoading(document.getElementById('confirm-action-btn'), 'Weaving...');
+
+        try {
+            const response = await fetch('/api/generate-story', {
+                method: 'POST', 
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ 
+                    project_name: projectName, 
+                    tone: selectedTone, 
+                    notes: selectedNotes 
+                })
             });
             const data = await response.json();
-            if (data.status === 'success') {
-                resultDiv.innerHTML = `<p class="text-sm text-slate-600 mb-2">Share this single link with your entire group:</p><div class="flex space-x-2"><input type="text" readonly value="${data.shared_url}" class="form-input flex-grow p-2"><button type="button" class="btn btn-secondary copy-btn">Copy</button></div>`;
-                resultDiv.querySelector('.copy-btn').addEventListener('click', (copyEvent) => {
-                    navigator.clipboard.writeText(data.shared_url).then(() => {
-                        copyEvent.target.textContent = 'Copied!';
-                        setTimeout(() => { copyEvent.target.textContent = 'Copy'; }, 2000);
-                    });
-                });
-            } else {
-                resultDiv.textContent = data.message || 'An error occurred.';
-            }
-        } catch (error) {
-            console.error('Error generating shared token:', error);
-            resultDiv.textContent = 'A network error occurred.';
-        }
-    };
+            if (!response.ok) throw new Error(data.error || 'API Error');
+            
+            document.getElementById('note-selection-modal').classList.add('hidden');
+            const storyModal = document.getElementById('story-modal');
+            document.getElementById('story-modal-title').textContent = `Your Story: ${projectName}`;
+            document.getElementById('story-modal-content').innerHTML = `<div class="prose max-w-none">${data.story.replace(/\n/g, '<br>')}</div>`;
+            storyModal.classList.remove('hidden');
 
-    const handleSuggestTags = async (e) => {
+        } catch (error) {
+            console.error('Error generating story:', error);
+            alert(`Failed to generate story: ${error.message}`);
+        } finally {
+            setButtonActive(document.getElementById('confirm-action-btn'), 'Confirm Selection');
+        }
+    }
+
+    // --- UI RENDERING & HELPERS ---
+    
+    function renderNote(note, prepend = false) {
+        const notesContainer = document.getElementById('notes-container');
+        if (!notesContainer) return;
+        
+        const noteCard = document.createElement('div');
+        noteCard.className = 'note-card'; // Add animation classes if you have them
+        const tagsHTML = note.tags?.length > 0 ? note.tags.map(t => `<span class="tag">${t}</span>`).join('') : '';
+        let formattedContent = note.content.replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+
+        noteCard.innerHTML = `
+            <div class="flex flex-wrap items-center gap-2 mb-3">
+                <span class="contributor-tag">${note.contributor_label}</span>
+                ${tagsHTML}
+            </div>
+            <p class="note-timestamp">${note.formatted_timestamp}</p>
+            <div class="note-content">${formattedContent}</div>`;
+        
+        if (prepend) {
+            notesContainer.prepend(noteCard);
+        } else {
+            notesContainer.appendChild(noteCard);
+        }
+    }
+
+    function resetAndOpenNoteSelector(title) {
+        selectedNotes = [];
+        noteSelectionCandidates.clear();
+        previewState = { searchQuery: '', selectedTags: [], currentPage: 1, totalPages: 1 };
+        document.getElementById('note-selection-title').textContent = title;
+        updateSelectedNotesUI();
+        document.getElementById('preview-search-input').value = '';
+        fetchAndRenderTags();
+        fetchAndRenderPreviewNotes();
+        document.getElementById('note-selection-modal').classList.remove('hidden');
+    }
+    
+    function createPreviewNoteElement(note) {
+        const isSelected = selectedNotes.some(n => n._id === note._id);
+        const element = document.createElement('div');
+        element.className = 'p-3 border rounded-md bg-white flex items-start space-x-3 transition-colors hover:bg-slate-50';
+        const contentPreview = note.content.substring(0, 150) + (note.content.length > 150 ? '...' : '');
+        
+        element.innerHTML = `
+            <input type="checkbox" data-note-id="${note._id}" data-note-content="${escape(note.content)}" class="mt-1 h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer" ${isSelected ? 'checked' : ''}>
+            <div>
+                <label class="block text-xs font-bold text-slate-500 cursor-pointer">${note.contributor_label}</label>
+                <p class="text-sm text-slate-800 cursor-pointer">${contentPreview}</p>
+            </div>`;
+        return element;
+    }
+    
+    function renderPagination() {
+        const { currentPage, totalPages } = previewState;
+        const container = document.getElementById('preview-pagination-container');
+        container.innerHTML = `<button class="pagination-btn" data-page="${currentPage - 1}" ${currentPage <= 1 ? 'disabled' : ''}>Prev</button>
+                               <span class="text-sm text-slate-600">Page ${currentPage} of ${totalPages || 1}</span>
+                               <button class="pagination-btn" data-page="${currentPage + 1}" ${currentPage >= totalPages ? 'disabled' : ''}>Next</button>`;
+    }
+    
+    function updateSelectedNotesUI() {
+        const countEl = document.getElementById('selected-notes-count');
+        const containerEl = document.getElementById('selected-notes-container');
+        if (!countEl || !containerEl) return;
+
+        countEl.textContent = selectedNotes.length;
+        document.getElementById('confirm-action-btn').disabled = selectedNotes.length === 0;
+
+        containerEl.innerHTML = '';
+        selectedNotes.forEach(note => {
+            const noteDiv = document.createElement('div');
+            noteDiv.className = 'p-2 border text-sm bg-white rounded shadow-sm';
+            noteDiv.textContent = note.content.substring(0, 70) + (note.content.length > 70 ? '...' : '');
+            containerEl.appendChild(noteDiv);
+        });
+    }
+
+    function handleNoteCheckboxChange(e) {
+        if (e.target.matches('input[type="checkbox"]')) {
+            const noteId = e.target.dataset.noteId;
+            const noteContent = unescape(e.target.dataset.noteContent);
+            
+            if (e.target.checked) {
+                if (!selectedNotes.some(n => n._id === noteId)) {
+                    selectedNotes.push({ _id: noteId, content: noteContent });
+                }
+            } else {
+                selectedNotes = selectedNotes.filter(n => n._id !== noteId);
+            }
+            updateSelectedNotesUI();
+        }
+    }
+    
+    async function populateContributors() {
+        const filterEl = document.getElementById('contributor-filter');
+        if (!filterEl) return;
+        try {
+            const response = await fetch(`/api/contributors/${projectId}`);
+            const contributors = await response.json();
+            filterEl.innerHTML = contributors.map(c => `<option value="${c}">${c}</option>`).join('');
+        } catch (error) { console.error('Failed to populate contributors:', error); }
+    }
+
+    async function fetchAndRenderTags() {
+        const container = document.getElementById('preview-tags-container');
+        if (!container) return;
+        try {
+            const response = await fetch(`/api/get-tags/${projectId}`);
+            const tags = await response.json();
+            container.innerHTML = tags.map(tag => `<label class="flex items-center space-x-2 cursor-pointer p-1 rounded hover:bg-indigo-50"><input type="checkbox" class="tag-checkbox" value="${tag}"><span>${tag}</span></label>`).join('');
+        } catch (error) { console.error('Failed to fetch tags:', error); }
+    }
+    
+    async function handleSuggestTags() {
         const content = document.getElementById('note-content').value.trim();
-        if (!content) { alert('Please write something first.'); return; }
-        suggestTagsBtn.disabled = true; suggestTagsBtn.textContent = '...';
-        tagSuggestionsContainer.innerHTML = `<p class="text-slate-500 text-sm">AI is thinking...</p>`;
+        const btn = document.getElementById('suggest-tags-btn');
+        const container = document.getElementById('tag-suggestions-container');
+        if (!content) { alert('Please write a note first.'); return; }
+        
+        setButtonLoading(btn, '...');
+        container.innerHTML = `<p class="text-slate-500 text-sm">AI is thinking...</p>`;
+        
         try {
             const response = await fetch('/api/suggest-tags', {
                 method: 'POST', headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ content, project_id: projectId })
             });
             const data = await response.json();
-            renderTagSuggestions(data.tags);
+            container.innerHTML = '';
+            data.tags.forEach(tag => {
+                const tagEl = document.createElement('button');
+                tagEl.type = 'button';
+                tagEl.className = 'tag-suggestion';
+                tagEl.textContent = tag;
+                tagEl.onclick = () => addTagToInput(tag);
+                container.appendChild(tagEl);
+            });
         } catch (error) {
             console.error("Failed to fetch tag suggestions:", error);
-            tagSuggestionsContainer.innerHTML = `<p class="text-red-500 text-sm">Could not get suggestions.</p>`;
-        } finally { suggestTagsBtn.disabled = false; suggestTagsBtn.textContent = 'Suggest'; }
-    };
-    
-    // --- UI & HELPER FUNCTIONS ---
-
-    const populateContributors = async () => {
-        if (!contributorFilter) return;
-        try {
-            const currentFilter = contributorFilter.value;
-            const response = await fetch(`/api/contributors/${projectId}`);
-            const contributors = await response.json();
-            contributorFilter.innerHTML = '';
-            contributors.forEach(label => {
-                const option = document.createElement('option');
-                option.value = label; option.textContent = label;
-                contributorFilter.appendChild(option);
-            });
-            contributorFilter.value = currentFilter || 'All Contributors';
-        } catch (error) { console.error('Failed to populate contributors:', error); }
-    };
-    
-    const renderTagSuggestions = (tags) => {
-        if (!tagSuggestionsContainer) return;
-        tagSuggestionsContainer.innerHTML = '';
-        if (!tags || tags.length === 0) {
-            tagSuggestionsContainer.innerHTML = `<p class="text-slate-500 text-sm">No suggestions found.</p>`; return;
+        } finally {
+            setButtonActive(btn, 'Suggest');
         }
-        tags.forEach(tag => {
-            const tagEl = document.createElement('button');
-            tagEl.type = 'button';
-            tagEl.className = 'tag-suggestion bg-teal-100 text-teal-800 text-sm font-semibold px-3 py-1 rounded-full hover:bg-teal-200';
-            tagEl.textContent = tag;
-            tagEl.addEventListener('click', () => addTagToInput(tag));
-            tagSuggestionsContainer.appendChild(tagEl);
-        });
-    };
+    }
     
-    const addTagToInput = (tagToAdd) => {
+    function addTagToInput(tagToAdd) {
         const tagsInput = document.getElementById('note-tags-input');
-        const currentTags = tagsInput.value.trim() ? tagsInput.value.split(',').map(t => t.trim().toLowerCase()) : [];
-        const tagSet = new Set(currentTags);
-        if (!tagSet.has(tagToAdd.toLowerCase())) tagSet.add(tagToAdd.toLowerCase());
-        tagsInput.value = Array.from(tagSet).join(', ');
-    };
+        const currentTags = new Set(tagsInput.value.split(',').map(t => t.trim()).filter(Boolean));
+        currentTags.add(tagToAdd);
+        tagsInput.value = Array.from(currentTags).join(', ');
+    }
+
+    async function handleTokenFormSubmit(e) {
+        e.preventDefault();
+        // Logic for generating and displaying invite tokens
+    }
     
-    const updateFollowUps = (questions) => {
-        if (!followUpList || !followUpContainer) return;
-        followUpList.innerHTML = '';
-        if (questions && questions.length > 0) {
-            questions.forEach(q => {
-                const li = document.createElement('li');
-                li.className = 'p-4 bg-indigo-50/80 text-indigo-800 rounded-lg cursor-pointer hover:bg-indigo-100 transition-all duration-300 transform hover:scale-105';
-                li.textContent = q;
-                followUpList.appendChild(li);
-            });
-            followUpContainer.classList.remove('hidden');
-        } else {
-            followUpContainer.classList.add('hidden');
+    async function handleGenerateNotesSubmit(e) {
+        e.preventDefault();
+        // Logic for AI generating study notes
+    }
+
+    function setButtonLoading(button, text = 'Loading...') {
+        if(button) {
+            button.disabled = true;
+            button.textContent = text;
         }
-    };
-    
-    // --- MODAL & STORY GENERATION FUNCTIONS ---
-
-    const fetchAndRenderPreviewNotes = async () => {
-        const { searchQuery, selectedTags, currentPage } = previewState;
-        const params = new URLSearchParams({ page: currentPage, q: searchQuery, tags: selectedTags.join(',') });
-        try {
-            const response = await fetch(`/api/search-notes/${projectId}?${params}`);
-            const data = await response.json();
-            previewState.totalPages = data.total_pages;
-            previewNotesContainer.innerHTML = '';
-            if (data.notes.length === 0) previewNotesContainer.innerHTML = '<p class="text-slate-500 p-4">No notes found.</p>';
-            data.notes.forEach(note => {
-                storyCandidates.notes.set(note._id, note);
-                const noteEl = createPreviewNoteElement(note);
-                previewNotesContainer.appendChild(noteEl);
-            });
-            renderPagination();
-            previewResultsSummary.textContent = `Showing page ${previewState.currentPage} of ${previewState.totalPages || 1}. (${data.total_notes} total)`;
-        } catch (error) { console.error('Failed to search notes:', error); }
-    };
-    
-    const createPreviewNoteElement = (note) => {
-        const isSelected = storyCandidates.selectedNotes.has(note._id);
-        const element = document.createElement('div');
-        element.className = 'p-3 border rounded-md bg-white flex items-start space-x-3 transition-colors hover:bg-slate-50';
-        const tagsHTML = note.tags?.length > 0 ? `<div class="mt-2 flex flex-wrap gap-1">${note.tags.map(t => `<span class="bg-sky-100 text-sky-800 text-xs px-2 py-0.5 rounded-full">${t}</span>`).join('')}</div>` : '';
-        element.innerHTML = `<input type="checkbox" data-id="${note._id}" class="note-checkbox mt-1 h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer" ${isSelected ? 'checked' : ''}><div><label class="block text-xs font-bold text-slate-500 cursor-pointer">${note.contributor_label}</label><p class="text-sm text-slate-800 cursor-pointer">${note.content}</p>${tagsHTML}</div>`;
-        return element;
-    };
-    
-    const renderPagination = () => {
-        const { currentPage, totalPages } = previewState;
-        previewPaginationContainer.innerHTML = `<button class="pagination-btn bg-slate-200 px-3 py-1 rounded-md text-sm hover:bg-slate-300" data-page="${currentPage - 1}" ${currentPage <= 1 ? 'disabled' : ''}>Prev</button><span class="text-sm text-slate-600">Page ${currentPage} of ${totalPages || 1}</span><button class="pagination-btn bg-slate-200 px-3 py-1 rounded-md text-sm hover:bg-slate-300" data-page="${currentPage + 1}" ${currentPage >= totalPages ? 'disabled' : ''}>Next</button>`;
-    };
-    
-    const renderSelectedNotes = () => {
-        selectedNotesContainer.innerHTML = '';
-        storyCandidates.selectedNotes.forEach(note => {
-            const el = document.createElement('div');
-            el.className = 'p-2 border text-sm bg-white rounded shadow-sm';
-            el.textContent = note.content.substring(0, 80) + (note.content.length > 80 ? '...' : '');
-            selectedNotesContainer.appendChild(el);
-        });
-        const count = storyCandidates.selectedNotes.size;
-        selectedNotesCount.textContent = count;
-        confirmStoryGenerationBtn.disabled = count === 0;
-    };
-    
-    const fetchAndRenderTags = async () => {
-        try {
-            const response = await fetch(`/api/get-tags/${projectId}`);
-            const tags = await response.json();
-            previewTagsContainer.innerHTML = tags.map(tag => `<label class="flex items-center space-x-2 cursor-pointer p-1 rounded hover:bg-indigo-50"><input type="checkbox" class="tag-checkbox rounded border-slate-300 text-indigo-600 focus:ring-indigo-500" value="${tag}"><span>${tag}</span></label>`).join('');
-        } catch (error) { console.error('Failed to fetch tags:', error); }
-    };
-    
-    // --- INITIALIZATION & EVENT LISTENERS ---
-
-    if (isWorkspaceView) {
-        newProjectForm.addEventListener('submit', handleNewProjectSubmit);
-        document.querySelectorAll('.card-reveal').forEach(card => observer.observe(card));
-    }
-    
-    if (isProjectView) {
-        tokenForm.addEventListener('submit', handleTokenFormSubmit);
-        if (sharedTokenForm) sharedTokenForm.addEventListener('submit', handleSharedTokenFormSubmit);
-        contributorFilter.addEventListener('change', () => fetchNotes(true));
-        
-        generateStoryBtn.addEventListener('click', async () => {
-            storyCandidates.notes.clear(); storyCandidates.selectedNotes.clear();
-            previewState = { searchQuery: '', selectedTags: [], currentPage: 1, totalPages: 1 };
-            if (previewSearchInput) previewSearchInput.value = '';
-            renderSelectedNotes();
-            storyPreviewTitle.textContent = `Build Story for: ${projectName}`;
-            await fetchAndRenderTags(); 
-            await fetchAndRenderPreviewNotes();
-        });
-
-        suggestTagsBtn.addEventListener('click', handleSuggestTags);
-        
-        confirmStoryGenerationBtn.addEventListener('click', async () => {
-            const notesToInclude = Array.from(storyCandidates.selectedNotes.values());
-            if (notesToInclude.length === 0) return;
-            const selectedTone = document.getElementById('story-tone-select').value;
-            confirmStoryGenerationBtn.textContent = "Weaving..."; confirmStoryGenerationBtn.disabled = true;
-            try {
-                const response = await fetch('/api/generate-story', {
-                    method: 'POST', headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ project_name: projectName, tone: selectedTone, notes: notesToInclude })
-                });
-                const data = await response.json();
-                storyPreviewModal.classList.add('hidden');
-                storyModalTitle.textContent = `Your Story: ${projectName}`;
-                storyModalContent.innerHTML = `<div class="prose lg:prose-xl max-w-none">${data.story.replace(/\n/g, '<br>')}</div>`;
-                storyModal.classList.remove('hidden');
-            } catch (error) { console.error('Error in final story generation:', error); }
-            finally { confirmStoryGenerationBtn.textContent = "Weave Story"; }
-        });
-
-        previewSearchInput.addEventListener('keyup', (e) => { clearTimeout(searchDebounceTimer); searchDebounceTimer = setTimeout(() => { previewState.searchQuery = e.target.value; previewState.currentPage = 1; fetchAndRenderPreviewNotes(); }, 500); });
-        previewTagsContainer.addEventListener('change', () => { previewState.selectedTags = Array.from(previewTagsContainer.querySelectorAll('.tag-checkbox:checked')).map(cb => cb.value); previewState.currentPage = 1; fetchAndRenderPreviewNotes(); });
-        previewPaginationContainer.addEventListener('click', (e) => { if (e.target.matches('.pagination-btn') && !e.target.disabled) { previewState.currentPage = parseInt(e.target.dataset.page); fetchAndRenderPreviewNotes(); } });
-        previewNotesContainer.addEventListener('change', (e) => {
-            if (e.target.matches('.note-checkbox')) {
-                const noteId = e.target.dataset.id;
-                const note = storyCandidates.notes.get(noteId);
-                if (e.target.checked) storyCandidates.selectedNotes.set(noteId, note);
-                else storyCandidates.selectedNotes.delete(noteId);
-                renderSelectedNotes();
-            }
-        });
-        
-        populateContributors();
-        fetchNotes();
-        window.addEventListener('scroll', () => { if (window.innerHeight + window.scrollY >= document.body.offsetHeight - 500) fetchNotes(); });
-    }
-    
-    if (isInviteView) {
-        followUpList.addEventListener('click', (e) => {
-            if (e.target.tagName === 'LI') {
-                const questionText = e.target.textContent;
-                const noteTextarea = document.getElementById('note-content');
-                noteTextarea.value = questionText + '\n\n';
-                noteTextarea.focus();
-                if (jsData) jsData.dataset.activePrompt = questionText;
-            }
-        });
     }
 
-    if(noteForm) noteForm.addEventListener('submit', handleNoteFormSubmit);
+    function setButtonActive(button, text) {
+        if(button) {
+            button.disabled = false;
+            button.textContent = text;
+        }
+    }
+
+    // --- INITIALIZE THE APP ---
+    initializePage();
 });
+

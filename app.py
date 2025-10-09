@@ -25,6 +25,7 @@ projects_collection = db['projects']
 notes_collection = db['notes']
 invited_users_collection = db['invited_users']
 shared_invites_collection = db['shared_invites']
+quizzes_collection = db['quizzes']
 openai.api_key = os.environ.get('OPENAI_API_KEY')
 if not openai.api_key:
     print("WARNING: OPENAI_API_KEY environment variable not set. AI features will fail.")
@@ -43,6 +44,8 @@ notes_collection.create_index([("content", TEXT)])
 notes_collection.create_index([("tags", 1)])
 notes_collection.create_index([("project_id", 1), ("user_id", 1), ("timestamp", -1)])
 projects_collection.create_index([("user_id", 1), ("created_at", -1)])
+quizzes_collection.create_index([("share_token", 1)], unique=True, sparse=True)
+quizzes_collection.create_index([("project_id", 1), ("created_at", -1)])
 
 # --- User Management Setup ---
 login_manager = LoginManager()
@@ -85,7 +88,6 @@ def send_notification_email(contributor_label, project_name, content_snippet, to
 
     recipient_email = NOTIFICATION_EMAIL_TO_OVERRIDE or project_owner_email
     
-    # Determine the correct link based on the token type
     invite_url = url_for('invite_note', token=token, _external=True) if not is_shared else url_for('shared_invite_page', token=token, _external=True)
 
     email_subject = f"🔔 New Note in '{project_name}' from {contributor_label}"
@@ -168,6 +170,56 @@ def get_ai_suggested_tags(project_id, entry_content):
         return []
 
 
+def get_ai_study_notes(topic, project_goal):
+    if not openai.api_key: return []
+    try:
+        system_prompt = f"You are an expert educator creating study materials for a project with the goal: '{project_goal}'. Generate 5 concise, well-structured study notes. Each note should be a standalone piece of information. For key terms, use markdown bolding (e.g., **Term**). Return a JSON object: {{\"notes\": [\"Note 1 content...\", \"Note 2 content...\"]}}."
+        user_prompt = f"Generate 5 study notes for the topic: '{topic}'."
+        completion = openai.chat.completions.create(model="gpt-4o-mini",
+                                                    messages=[{"role": "system", "content": system_prompt},
+                                                              {"role": "user", "content": user_prompt}],
+                                                    response_format={"type": "json_object"})
+        notes_data = json.loads(completion.choices[0].message.content)
+        return notes_data.get('notes', [])
+    except Exception as e:
+        print(f"Error calling OpenAI for study notes: {e}")
+        return []
+
+def get_ai_quiz(notes_content, num_questions, question_type, difficulty, knowledge_source):
+    """Generates a quiz from notes with specified options."""
+    if not openai.api_key: return []
+
+    if knowledge_source == 'notes_only':
+        source_instruction = "Base your questions STRICTLY on the provided notes. Do not introduce any information not present in the text. If the notes are insufficient, state that you cannot create the quiz."
+    else: # 'notes_and_ai'
+        source_instruction = "Use the provided notes as the primary source material, but supplement with your general knowledge to create a comprehensive quiz on the topic."
+
+    if question_type == 'True/False':
+        json_format = '{"quiz": [{"question": "...", "answer": true/false}]}'
+    else: # Multiple Choice
+        json_format = '{"quiz": [{"question": "...", "options": ["A", "B", "C", "D"], "correct_answer_index": N}]}'
+    
+    try:
+        system_prompt = f"""
+        You are a quiz generation AI. Your task is to create a {num_questions}-question, {difficulty}-difficulty, {question_type} quiz.
+        {source_instruction}
+        Return the quiz as a JSON object with the exact format: {json_format}
+        """
+        user_prompt = f"Notes:\n{notes_content}\n\nGenerate the quiz."
+
+        completion = openai.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{"role": "system", "content": system_prompt},
+                      {"role": "user", "content": user_prompt}],
+            response_format={"type": "json_object"}
+        )
+        quiz_data = json.loads(completion.choices[0].message.content)
+        return quiz_data.get('quiz', [])
+    except Exception as e:
+        print(f"Error calling OpenAI for quiz generation: {e}")
+        return []
+
+
 # ----------------------------------------------------------------------
 # --- Auth Routes ---
 # ----------------------------------------------------------------------
@@ -222,9 +274,24 @@ def logout():
 @app.route('/')
 @login_required
 def index():
-    all_projects = list(projects_collection.find({'user_id': ObjectId(current_user.id)}).sort("created_at", -1))
+    # --- START DEBUGGING ---
+    print(f"✅ [DEBUG] In index() for user: {current_user.id}")
+    
+    # Convert to ObjectId for the query
+    user_object_id = ObjectId(current_user.id)
+    print(f"✅ [DEBUG] Querying for user_id: {user_object_id}")
+
+    # Run the query
+    all_projects = list(projects_collection.find({'user_id': user_object_id}).sort("created_at", -1))
+    
+    print(f"✅ [DEBUG] Found {len(all_projects)} projects for this user.")
+    if len(all_projects) > 0:
+        print(f"✅ [DEBUG] First project name: {all_projects[0].get('name')}")
+    # --- END DEBUGGING ---
+
     for p in all_projects:
         p['_id'] = str(p['_id'])
+        
     return render_template('index.html', projects=all_projects)
 
 
@@ -232,12 +299,22 @@ def index():
 @login_required
 def project_view(project_id):
     try:
-        project = projects_collection.find_one({"_id": ObjectId(project_id), "user_id": ObjectId(current_user.id)})
+        project_obj_id = ObjectId(project_id)
+        project = projects_collection.find_one({"_id": project_obj_id, "user_id": ObjectId(current_user.id)})
+        
         if not project:
             flash("Project not found or you don't have access.", "error")
             return redirect(url_for('index'))
+            
+        quizzes = list(quizzes_collection.find({"project_id": project_obj_id}).sort("created_at", -1))
+        for quiz in quizzes:
+            quiz['_id'] = str(quiz['_id'])
+
         project['_id'] = str(project['_id'])
-        return render_template('project.html', project=project, story_tones=STORY_TONES)
+        project['project_type'] = project.get('project_type', 'story')
+        
+        return render_template('project.html', project=project, story_tones=STORY_TONES, quizzes=quizzes)
+
     except Exception:
         flash("Invalid Project ID.", "error")
         return redirect(url_for('index'))
@@ -280,6 +357,27 @@ def shared_invite_page(token):
         shared_token=token
     )
 
+@app.route('/quiz/<share_token>')
+def shared_quiz_page(share_token):
+    quiz = quizzes_collection.find_one({"share_token": share_token})
+    if not quiz:
+        return "Invalid or expired quiz link.", 404
+
+    project = projects_collection.find_one({"_id": quiz['project_id']})
+    if not project:
+        return "Associated project not found.", 404
+        
+    quiz['_id'] = str(quiz['_id'])
+    project['_id'] = str(project['_id'])
+    
+    return render_template(
+        'shared_quiz.html',
+        quiz=quiz.get('quiz_data', []),
+        quiz_title=quiz.get('title', 'Quiz'),
+        project_name=project.get('name', 'Project'),
+        question_type=quiz.get('question_type', 'Multiple Choice')
+    )
+
 # ----------------------------------------------------------------------
 # --- API Routes ---
 # ----------------------------------------------------------------------
@@ -314,13 +412,17 @@ def generate_shared_token():
 @login_required
 def create_project():
     data = request.get_json()
-    name, project_goal = data.get('name', '').strip(), data.get('project_goal', '').strip()
+    name = data.get('name', '').strip()
+    project_goal = data.get('project_goal', '').strip()
+    project_type = data.get('project_type', 'story').strip()
+    
     if not name or not project_goal:
         return jsonify({"status": "error", "message": "Project name and goal are required."}), 400
 
     project_doc = {
         'name': name,
         'project_goal': project_goal,
+        'project_type': project_type,
         'created_at': datetime.datetime.utcnow(),
         'user_id': ObjectId(current_user.id)
     }
@@ -523,6 +625,89 @@ def get_contributors(project_id):
     except Exception as e:
         print(f"Error getting contributors: {e}")
         return jsonify({"error": "Could not retrieve contributors"}), 500
+
+
+@app.route('/api/generate-notes', methods=['POST'])
+@login_required
+def generate_notes():
+    if not openai.api_key: return jsonify({"error": "OpenAI API key is not configured."}), 500
+    data = request.get_json()
+    project_id, topic = data.get('project_id'), data.get('topic', '').strip()
+    if not all([project_id, topic]):
+        return jsonify({"error": "Project ID and topic are required."}), 400
+
+    project = projects_collection.find_one({"_id": ObjectId(project_id), "user_id": ObjectId(current_user.id)})
+    if not project: return jsonify({"error": "Project not found or unauthorized."}), 404
+
+    generated_notes_content = get_ai_study_notes(topic, project.get('project_goal', ''))
+    if not generated_notes_content: return jsonify({"error": "AI failed to generate notes."}), 500
+    
+    new_notes_docs = []
+    for content in generated_notes_content:
+        note_doc = {
+            'project_id': ObjectId(project_id),
+            'user_id': project['user_id'],
+            'content': content,
+            'timestamp': datetime.datetime.utcnow(),
+            'contributor_label': 'AI Assistant',
+            'tags': ['ai-generated', topic.lower().replace(' ', '-')]
+        }
+        result = notes_collection.insert_one(note_doc)
+        note_doc['_id'] = str(result.inserted_id)
+        note_doc['project_id'] = str(note_doc['project_id'])
+        note_doc['user_id'] = str(note_doc['user_id'])
+        note_doc['formatted_timestamp'] = note_doc['timestamp'].strftime('%B %d, %Y, %-I:%M %p')
+        new_notes_docs.append(note_doc)
+
+    return jsonify({"status": "success", "notes": new_notes_docs})
+
+
+@app.route('/api/generate-quiz', methods=['POST'])
+@login_required
+def generate_quiz():
+    if not openai.api_key: return jsonify({"error": "OpenAI API key is not configured."}), 500
+    data = request.get_json()
+
+    selected_notes = data.get('notes', [])
+    quiz_title = data.get('title', 'Generated Quiz').strip()
+    num_questions = data.get('num_questions', 5)
+    question_type = data.get('question_type', 'Multiple Choice')
+    difficulty = data.get('difficulty', 'Medium')
+    knowledge_source = data.get('knowledge_source', 'notes_and_ai')
+
+    if not selected_notes: return jsonify({"error": "No notes were selected to generate the quiz."}), 400
+
+    try: 
+        first_note_id = selected_notes[0].get('_id')
+        note_check = notes_collection.find_one({"_id": ObjectId(first_note_id), "user_id": ObjectId(current_user.id)})
+        if not note_check: return jsonify({"error": "Unauthorized"}), 403
+        project_id = note_check['project_id']
+    except Exception: return jsonify({"error": "Invalid note ID provided"}), 400
+    
+    formatted_notes = "\n---\n".join([note.get('content', '') for note in selected_notes])
+    
+    quiz_data = get_ai_quiz(formatted_notes, num_questions, question_type, difficulty, knowledge_source)
+
+    if not quiz_data: return jsonify({"error": "Failed to generate quiz from AI. The source notes might be insufficient."}), 500
+    
+    share_token = str(uuid.uuid4())
+    
+    quiz_doc = {
+        "user_id": ObjectId(current_user.id),
+        "project_id": project_id,
+        "title": quiz_title,
+        "quiz_data": quiz_data,
+        "question_type": question_type,
+        "source_note_ids": [ObjectId(note['_id']) for note in selected_notes],
+        "created_at": datetime.datetime.utcnow(),
+        "share_token": share_token
+    }
+    
+    quizzes_collection.insert_one(quiz_doc)
+    
+    shareable_url = url_for('shared_quiz_page', share_token=share_token, _external=True)
+
+    return jsonify({"quiz": quiz_data, "question_type": question_type, "shareable_url": shareable_url})
 
 
 @app.route('/api/generate-story', methods=['POST'])

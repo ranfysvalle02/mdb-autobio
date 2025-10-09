@@ -14,11 +14,18 @@
         <form id="new-project-form" class="space-y-4">
             <div>
                 <label for="project-name-input" class="block text-sm font-medium text-slate-700 mb-1">Project Name</label>
-                <input type="text" id="project-name-input" required class="form-input" placeholder="e.g., 'Grandma's Biography'">
+                <input type="text" id="project-name-input" required class="form-input" placeholder="e.g., 'Grandma's Biography' or 'Biology 101'">
+            </div>
+             <div>
+                <label for="project-type-select" class="block text-sm font-medium text-slate-700 mb-1">Project Type</label>
+                <select id="project-type-select" class="form-select">
+                    <option value="story">Story / Creative</option>
+                    <option value="study">Study Aid</option>
+                </select>
             </div>
             <div>
                 <label for="project-goal-input" class="block text-sm font-medium text-slate-700 mb-1">Project Goal</label>
-                <textarea id="project-goal-input" rows="3" required class="form-textarea" placeholder="e.g., 'A biography of my grandfather', 'Collect memories about our family vacations'"></textarea>
+                <textarea id="project-goal-input" rows="3" required class="form-textarea" placeholder="e.g., 'A biography of my grandfather' or 'Study for the midterm exam'"></textarea>
             </div>
             <div class="flex justify-end pt-2">
                 <button type="submit" class="btn btn-primary">Create Project</button>
@@ -29,17 +36,36 @@
     <div>
         <h3 class="text-3xl font-bold mb-6 text-center md:text-left">All Projects</h3>
         <div id="projects-container" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            
             {% if projects %}
                 {% for project in projects %}
                 <a href="{{ url_for('project_view', project_id=project._id) }}" class="card-reveal project-card">
-                    <h4 class="text-xl font-bold text-slate-800 truncate mb-2">{{ project.name }}</h4>
-                    <p class="text-sm text-slate-600 italic border-l-2 border-pink-200 pl-3 mb-4">"{{ project.project_goal }}"</p>
-                    <p class="text-xs text-slate-500 mt-auto pt-2 border-t border-slate-200/80">Created: {{ project.created_at.strftime('%B %d, %Y') }}</p>
+                    <div class="flex justify-between items-start">
+                        <h4 class="text-xl font-bold text-slate-800 truncate mb-2 pr-2">{{ project.get('name', 'PROJECT NAME MISSING') }}</h4>
+                        
+                        {% if project.get('project_type') == 'study' %}
+                        <span class="text-xs font-semibold bg-cyan-100 text-cyan-800 px-2 py-1 rounded-full">Study</span>
+                        {% else %}
+                        <span class="text-xs font-semibold bg-purple-100 text-purple-800 px-2 py-1 rounded-full">Story</span>
+                        {% endif %}
+                    </div>
+                    
+                    <p class="text-sm text-slate-600 italic border-l-2 border-pink-200 pl-3 mb-4">"{{ project.get('project_goal', 'Goal missing.') }}"</p>
+                    
+                    <p class="text-xs text-slate-500 mt-auto pt-2 border-t border-slate-200/80">
+                        Created: 
+                        {% if project.created_at and project.created_at.strftime %}
+                            {{ project.created_at.strftime('%B %d, %Y') }}
+                        {% else %}
+                            Date Missing
+                        {% endif %}
+                    </p>
                 </a>
                 {% endfor %}
             {% else %}
                 <p id="no-projects-message" class="text-slate-500 col-span-full text-center py-8">You haven't created any projects yet. Get started above!</p>
             {% endif %}
+
         </div>
     </div>
 </main>
