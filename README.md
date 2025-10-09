@@ -31,14 +31,6 @@ The system’s foundation is built on **projects**, which act as dedicated conta
 
 -----
 
-### **APPENDIX A: Under the Hood (Collection)**
-
-This conversational loop is powered by the Python backend. When a note is submitted via an invite link, the `/api/notes` endpoint in `app.py` triggers the `get_ai_follow_ups` function. This function sends the project's goal and the user's new entry to an AI model with a clear directive: *"Generate 3 insightful, open-ended follow-up questions to encourage deeper exploration."* The generated questions are then saved and displayed to the contributor, creating a seamless conversational experience.
-
------
-
------
-
 ## Stage 2: The AI Archivist — Imposing Order on Chaos
 
 Collected data is still just raw data. Before it can be synthesized, it needs structure. Manually tagging hundreds of notes is tedious, time-consuming, and rife with inconsistency. The Insight Engine introduces an AI assistant to serve as an intelligent archivist.
@@ -55,27 +47,6 @@ This dual approach ensures the AI suggests tags that are not only relevant but a
 > Maria, a product manager, is triaging user feedback. She pastes a note: *"A customer reported that the new dashboard is confusing, especially the date filter. They suggest simplifying it to presets like 'Last 7 Days' instead of a calendar picker."*
 >
 > She clicks "Suggest Tags." The AI, having seen her tag similar notes before, instantly suggests: `[#ux-feedback, #dashboard, #feature-request]`. This simple act saves time and eliminates ambiguity, ensuring the project's data is organized logically and ready for the next stage.
-
------
-
-### **APPENDIX B: Prompt Engineering Deep Dive (Tagging)**
-
-The quality of the tag suggestions comes from precise instructions given to the AI. The system prompt for the `get_ai_suggested_tags` function in `app.py` includes a crucial section that provides examples from the user's own history:
-
-```python
-# From app.py
-example_prompt_part = "Here are examples of how I've tagged previous notes in this project:\n\n"
-for entry in example_entries:
-    # ... formats the examples ...
-    example_prompt_part += f"- Note: \"{content_snippet}\"\n  Tags: {', '.join(entry['tags'])}\n"
-
-system_prompt = "You are an AI assistant... Analyze the new note and the user's past tagging style. Return as a JSON object..."
-user_prompt = f"{example_prompt_part}Now, suggest tags for this new note:\n\n\"{entry_content}\""
-```
-
-By "showing" the AI how the user thinks, the system gets far more relevant and personalized results.
-
------
 
 -----
 
@@ -116,6 +87,31 @@ The `generate-quiz` endpoint is a brilliant example of this philosophy. A user c
 > He uses the quiz generator to create a 25-question, "Hard" difficulty quiz, and he sets the knowledge source to **"Notes Only."** This is critical, as it ensures the quiz tests *his understanding of the course material*, not the AI's boundless knowledge.
 >
 > The system instantly generates a shareable quiz link. Leo now has an active recall practice tool that is scientifically proven to enhance memory retention. He sends the link to his study group, turning a solitary chore into a collaborative exercise.
+
+-----
+
+### **APPENDIX A: Under the Hood (Collection)**
+
+This conversational loop is powered by the Python backend. When a note is submitted via an invite link, the `/api/notes` endpoint in `app.py` triggers the `get_ai_follow_ups` function. This function sends the project's goal and the user's new entry to an AI model with a clear directive: *"Generate 3 insightful, open-ended follow-up questions to encourage deeper exploration."* The generated questions are then saved and displayed to the contributor, creating a seamless conversational experience.
+
+-----
+
+### **APPENDIX B: Prompt Engineering Deep Dive (Tagging)**
+
+The quality of the tag suggestions comes from precise instructions given to the AI. The system prompt for the `get_ai_suggested_tags` function in `app.py` includes a crucial section that provides examples from the user's own history:
+
+```python
+# From app.py
+example_prompt_part = "Here are examples of how I've tagged previous notes in this project:\n\n"
+for entry in example_entries:
+    # ... formats the examples ...
+    example_prompt_part += f"- Note: \"{content_snippet}\"\n  Tags: {', '.join(entry['tags'])}\n"
+
+system_prompt = "You are an AI assistant... Analyze the new note and the user's past tagging style. Return as a JSON object..."
+user_prompt = f"{example_prompt_part}Now, suggest tags for this new note:\n\n\"{entry_content}\""
+```
+
+By "showing" the AI how the user thinks, the system gets far more relevant and personalized results.
 
 -----
 
