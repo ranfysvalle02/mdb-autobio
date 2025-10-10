@@ -69,12 +69,14 @@
                         content: content,
                         project_id: projectId,
                         shared_token: sharedToken,
-                        contributor_label: contributorLabel
+                        contributor_label: contributorLabel,
+                        active_prompt: '{{ invite_prompt | escapejs }}' // Pass the prompt for context
                     })
                 });
 
                 if (!response.ok) {
-                    throw new Error('Failed to submit note.');
+                    const errorData = await response.json();
+                    throw new Error(errorData.message || 'Failed to submit note.');
                 }
 
                 document.getElementById('contribution-card').classList.add('hidden');
@@ -82,7 +84,7 @@
 
             } catch (error) {
                 console.error('Error submitting note:', error);
-                alert('An error occurred. Please try again.');
+                alert('An error occurred: ' + error.message);
                 submitBtn.disabled = false;
                 submitBtn.textContent = 'Add My Note';
             }

@@ -7,14 +7,13 @@ import uuid
 import openai
 from bson.objectid import ObjectId
 from pymongo import MongoClient
-from pymongo.errors import OperationFailure
 from werkzeug.security import generate_password_hash
 
-# load .env variables from a .env file if present
+# Load .env variables from a .env file if present
 from dotenv import load_dotenv
 load_dotenv()
+
 # --- Configuration ---
-# Ensure this matches your main app's configuration
 MONGO_URI = os.environ.get('MONGO_URI', 'mongodb://localhost:27017/?retryWrites=true&w=majority&directConnection=true')
 openai.api_key = os.environ.get('OPENAI_API_KEY')
 
@@ -118,43 +117,46 @@ def seed_database():
     # Sara's Story Project
     sara_story_notes = [
         {
-            "project_id": sara_project1_id, "user_id": user1_id, "contributor_label": "Me",
+            "_id": ObjectId(), "project_id": sara_project1_id, "user_id": user1_id, "contributor_label": "Me",
             "content": "I remember Grandma telling me about how she met Grandpa at a dance after the war. She said he was the worst dancer but had the kindest eyes.",
-            "tags": ["origin story", "grandpa", "romance"], "timestamp": now - datetime.timedelta(days=9)
+            "tags": ["origin story", "grandpa", "romance"], "timestamp": now - datetime.timedelta(days=9),
+            "answered_prompt": None # Added for schema consistency with app.py
         },
         {
-            "project_id": sara_project1_id, "user_id": user1_id, "contributor_label": "Uncle Bob",
+            "_id": ObjectId(), "project_id": sara_project1_id, "user_id": user1_id, "contributor_label": "Uncle Bob",
             "content": "Your grandmother's baking was legendary. Her apple pie could solve any world problem. She never used a recipe, it was all by feel.",
-            "tags": ["baking", "family traditions", "anecdote"], "timestamp": now - datetime.timedelta(days=8)
+            "tags": ["baking", "family traditions", "anecdote"], "timestamp": now - datetime.timedelta(days=8),
+            "answered_prompt": "What's your favorite memory of mom's baking?" # Simulating a response
         }
     ]
     all_notes_to_insert.extend(sara_story_notes)
 
     # Sara's Study Project
     biology_notes = [
-        {"project_id": sara_project2_id, "user_id": user1_id, "contributor_label": "AI Assistant", "content": "**Mitochondria**: Often called the 'powerhouse of the cell,' this organelle is responsible for generating most of the cell's supply of adenosine triphosphate (ATP).", "tags": ["ai-generated", "organelles"], "timestamp": now - datetime.timedelta(days=4)},
-        {"project_id": sara_project2_id, "user_id": user1_id, "contributor_label": "AI Assistant", "content": "**Photosynthesis**: The process used by plants to convert light energy into chemical energy, creating glucose and oxygen.", "tags": ["ai-generated", "plant-biology"], "timestamp": now - datetime.timedelta(days=4, hours=1)},
-        {"project_id": sara_project2_id, "user_id": user1_id, "contributor_label": "Me", "content": "Remember the stages of Mitosis: Prophase, Metaphase, Anaphase, Telophase. Acronym: PMAT.", "tags": ["mnemonic", "cell-division"], "timestamp": now - datetime.timedelta(days=3)},
+        {"_id": ObjectId(), "project_id": sara_project2_id, "user_id": user1_id, "contributor_label": "AI Assistant", "content": "**Mitochondria**: Often called the 'powerhouse of the cell,' this organelle is responsible for generating most of the cell's supply of adenosine triphosphate (ATP).", "tags": ["ai-generated", "organelles"], "timestamp": now - datetime.timedelta(days=4), "answered_prompt": None},
+        {"_id": ObjectId(), "project_id": sara_project2_id, "user_id": user1_id, "contributor_label": "AI Assistant", "content": "**Photosynthesis**: The process used by plants to convert light energy into chemical energy, creating glucose and oxygen.", "tags": ["ai-generated", "plant-biology"], "timestamp": now - datetime.timedelta(days=4, hours=1), "answered_prompt": None},
+        {"_id": ObjectId(), "project_id": sara_project2_id, "user_id": user1_id, "contributor_label": "Me", "content": "Remember the stages of Mitosis: Prophase, Metaphase, Anaphase, Telophase. Acronym: PMAT.", "tags": ["mnemonic", "cell-division"], "timestamp": now - datetime.timedelta(days=3), "answered_prompt": None},
     ]
     all_notes_to_insert.extend(biology_notes)
 
     # John's Sci-Fi Project
     john_scifi_notes = [
-        {"project_id": john_project1_id, "user_id": user2_id, "contributor_label": "Me", "content": "Planet Xylos: A tidally locked planet. One side is perpetually scorched desert, the other a frozen wasteland. Life exists only in the 'Twilight Zone' between them.", "tags": ["world-building", "setting", "xylos"], "timestamp": now - datetime.timedelta(days=19)},
-        {"project_id": john_project1_id, "user_id": user2_id, "contributor_label": "Me", "content": "Captain Eva Rostova: Former military pilot, disgraced after a controversial mission. Now captains a small smuggling ship, 'The Nomad'. Motivation: to find her missing brother.", "tags": ["character", "protagonist", "eva-rostova"], "timestamp": now - datetime.timedelta(days=15)},
-        {"project_id": john_project1_id, "user_id": user2_id, "contributor_label": "Guest Writer", "content": "Idea from the share link: What if the 'Twilight Zone' has strange, crystalline flora that hums with a low-level psychic energy?", "tags": ["brainstorm", "flora", "psychic"], "timestamp": now - datetime.timedelta(days=1)},
+        {"_id": ObjectId(), "project_id": john_project1_id, "user_id": user2_id, "contributor_label": "Me", "content": "Planet Xylos: A tidally locked planet. One side is perpetually scorched desert, the other a frozen wasteland. Life exists only in the 'Twilight Zone' between them.", "tags": ["world-building", "setting", "xylos"], "timestamp": now - datetime.timedelta(days=19), "answered_prompt": None},
+        {"_id": ObjectId(), "project_id": john_project1_id, "user_id": user2_id, "contributor_label": "Me", "content": "Captain Eva Rostova: Former military pilot, disgraced after a controversial mission. Now captains a small smuggling ship, 'The Nomad'. Motivation: to find her missing brother.", "tags": ["character", "protagonist", "eva-rostova"], "timestamp": now - datetime.timedelta(days=15), "answered_prompt": None},
+        {"_id": ObjectId(), "project_id": john_project1_id, "user_id": user2_id, "contributor_label": "Guest Writer", "content": "Idea from the share link: What if the 'Twilight Zone' has strange, crystalline flora that hums with a low-level psychic energy?", "tags": ["brainstorm", "flora", "psychic"], "timestamp": now - datetime.timedelta(days=1), "answered_prompt": "I'm looking for cool sci-fi ideas for my new book! What's a unique concept for a planet or alien species you can think of?"},
     ]
     all_notes_to_insert.extend(john_scifi_notes)
 
     # Generate embeddings for all notes
     for note in all_notes_to_insert:
         note['content_embedding'] = get_embedding(note['content'])
-        # Small delay to avoid hitting API rate limits
-        time.sleep(0.1)
+        time.sleep(0.1) # Small delay to avoid hitting API rate limits
 
-    notes_collection.insert_many(all_notes_to_insert)
+    if all_notes_to_insert:
+        notes_collection.insert_many(all_notes_to_insert)
+    
     # Get IDs of biology notes for quiz linking
-    biology_note_ids = [note['_id'] for note in all_notes_to_insert if note['project_id'] == sara_project2_id]
+    biology_note_ids = [note['_id'] for note in biology_notes]
     print(f"   Created {len(all_notes_to_insert)} notes with embeddings.")
 
     # --- 5. Create Sample Invites ---
