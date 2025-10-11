@@ -112,7 +112,7 @@ def ensure_atlas_indexes():
             }
             notes_collection.create_search_index(model=vector_index_definition)
             print(f"✅ Successfully initiated creation of Atlas Vector Search index '{ATLAS_VECTOR_SEARCH_INDEX_NAME}'.")
-            wait_for_index(notes_collection, ATLAS_VECTOR_SEARCH_INDEX_NAME)
+            # wait_for_index(notes_collection, ATLAS_VECTOR_SEARCH_INDEX_NAME)
         else:
             print(f"✅ Atlas Vector Search index '{ATLAS_VECTOR_SEARCH_INDEX_NAME}' already exists and is assumed to be ready.")
 
@@ -136,7 +136,7 @@ def ensure_atlas_indexes():
             }
             notes_collection.create_search_index(model=lucene_index_definition)
             print(f"✅ Successfully initiated creation of Atlas Lucene Search index '{ATLAS_LUCENE_INDEX_NAME}'.")
-            wait_for_index(notes_collection, ATLAS_LUCENE_INDEX_NAME)
+            # wait_for_index(notes_collection, ATLAS_LUCENE_INDEX_NAME)
         else:
             print(f"✅ Atlas Lucene Search index '{ATLAS_LUCENE_INDEX_NAME}' already exists and is assumed to be ready.")
 
