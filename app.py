@@ -1107,8 +1107,11 @@ def generate_study_guide():
 
     return jsonify({"study_guide": study_guide_md})
 
+ensure_atlas_indexes()
+app.static_folder = 'static'
 
 if __name__ == '__main__':
-    ensure_atlas_indexes()
-    app.static_folder = 'static'
-    app.run(host='0.0.0.0', port=5001, debug=True)
+    # This block is now ONLY for running the app locally for development
+    # (e.g., python app.py)
+    # Gunicorn and Render will IGNORE this block.
+    app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5001)), debug=True)
