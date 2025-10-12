@@ -1107,7 +1107,7 @@ def generate_study_guide():
 
     return jsonify({"study_guide": study_guide_md})
 
-ensure_atlas_indexes()
+#ensure_atlas_indexes()
 app.static_folder = 'static'
 
 if __name__ == '__main__':
