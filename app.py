@@ -679,6 +679,74 @@ def add_note():
     return jsonify({"status": "success", "note": new_note_doc, "new_follow_ups": new_follow_ups}), 201
 
 
+# ======================================================================
+# --- NEW: Edit and Delete Note API Routes ---
+# ======================================================================
+@app.route('/api/notes/<note_id>', methods=['PUT', 'DELETE'])
+@login_required
+def update_or_delete_note(note_id):
+    try:
+        note_obj_id = ObjectId(note_id)
+    except Exception:
+        return jsonify({"status": "error", "message": "Invalid note ID format."}), 400
+
+    note = notes_collection.find_one({"_id": note_obj_id})
+    if not note:
+        return jsonify({"status": "error", "message": "Note not found."}), 404
+
+    # Authorization check: Ensure the current user owns the note's project.
+    if str(note.get('user_id')) != current_user.id:
+        return jsonify({"status": "error", "message": "Unauthorized action."}), 403
+
+    # --- Handle PUT request for updating the note ---
+    if request.method == 'PUT':
+        data = request.get_json()
+        content = data.get('content', '').strip()
+        tags_string = data.get('tags', '') # Keep as string to handle empty case
+
+        if not content:
+            return jsonify({"status": "error", "message": "Content cannot be empty."}), 400
+
+        tags = sorted(list(set([tag.strip().lower() for tag in tags_string.split(',') if tag.strip()])))
+
+        update_fields = {
+            'content': content,
+            'tags': tags,
+            'updated_at': datetime.datetime.utcnow()
+        }
+
+        # If content changed, regenerate the embedding for Atlas Vector Search
+        if IS_ATLAS and note.get('content') != content:
+            embedding = get_embedding(content)
+            if embedding:
+                update_fields['content_embedding'] = embedding
+            else:
+                print(f"WARNING: Failed to regenerate embedding for updated note {note_id}")
+        
+        notes_collection.update_one({"_id": note_obj_id}, {"$set": update_fields})
+        
+        updated_note = notes_collection.find_one({"_id": note_obj_id})
+        
+        # Format the note for the frontend response
+        updated_note['_id'] = str(updated_note['_id'])
+        updated_note['project_id'] = str(updated_note['project_id'])
+        updated_note['user_id'] = str(updated_note['user_id'])
+        updated_note['formatted_timestamp'] = updated_note['timestamp'].strftime('%B %d, %Y, %-I:%M %p')
+        if 'content_embedding' in updated_note:
+            del updated_note['content_embedding']
+        
+        return jsonify({"status": "success", "note": updated_note})
+
+    # --- Handle DELETE request ---
+    if request.method == 'DELETE':
+        result = notes_collection.delete_one({"_id": note_obj_id})
+        if result.deleted_count == 1:
+            return jsonify({"status": "success", "message": "Note deleted successfully."})
+        else:
+            # This case should be rare given the checks above, but it's good practice
+            return jsonify({"status": "error", "message": "Note could not be deleted."}), 500
+
+
 @app.route('/api/notes/<project_id>')
 @login_required
 def get_notes(project_id):
