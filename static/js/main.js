@@ -4,7 +4,7 @@
  * This file handles user interactions for the workspace, project view, and invite pages.
  * It manages state, handles API communications for creating projects, notes, and AI-generated content,
  * and dynamically renders UI components.
- * @version 2.2.0 (Bugfix for note submission)
+ * @version 2.3.0 (Updated file upload to use external conversion service)
  */
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -19,6 +19,8 @@ document.addEventListener('DOMContentLoaded', () => {
         projectName: jsData?.dataset.projectName,
         isAtlas: jsData?.dataset.isAtlas === 'True',
         inviteToken: jsData?.dataset.inviteToken,
+        // Endpoint for the external file-to-markdown conversion service
+        doclingEndpoint: "https://ranfysvalle02--modal-docling-latest-extract.modal.run",
     };
 
     // Determine the current view to attach specific event listeners
@@ -558,7 +560,11 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         }
     }
-
+    
+    /**
+     * Handles file upload, sends it to an external conversion service,
+     * and populates the note textarea with the resulting markdown.
+     */
     async function handleFileUpload(e) {
         const file = e.target.files[0];
         if (!file) return;
@@ -566,28 +572,45 @@ document.addEventListener('DOMContentLoaded', () => {
         const noteContentTextarea = document.getElementById('note-content');
         const spinner = document.getElementById('file-processing-spinner');
         spinner.classList.remove('hidden');
+        showToast('Uploading & converting file...', 'info');
 
         const formData = new FormData();
-        formData.append('document', file);
+        formData.append('file', file); // Use 'file' key as per the demo endpoint
 
         try {
-            const response = await fetch('/api/process-document', {
+            // Use the new endpoint from the config object
+            const response = await fetch(config.doclingEndpoint, {
                 method: 'POST',
                 body: formData
+                // No 'Content-Type' header needed; the browser sets it for FormData
             });
-            const data = await response.json();
-            if (!response.ok) throw new Error(data.error || 'Failed to process file.');
 
+            const data = await response.json();
+            
+            // Check for errors based on the demo's logic
+            if (!response.ok) {
+                // Use the 'detail' key from FastAPI's error response if available
+                throw new Error(data.detail || 'Failed to convert file.');
+            }
+            
+            // The demo returns markdown in a 'markdown' field
+            const extractedText = data.markdown; 
             const existingText = noteContentTextarea.value.trim();
-            noteContentTextarea.value = existingText ? `${existingText}\n\n---\n\n${data.extracted_text}` : data.extracted_text;
+
+            noteContentTextarea.value = existingText 
+                ? `${existingText}\n\n---\n\n${extractedText}` 
+                : extractedText;
+            
+            showToast('✅ File converted successfully!', 'success');
 
         } catch (error) {
-            showToast(`Error processing file: ${error.message}`, 'error');
+            showToast(`Conversion Error: ${error.message}`, 'error');
         } finally {
             spinner.classList.add('hidden');
-            e.target.value = ''; // Reset file input
+            e.target.value = ''; // Reset file input to allow re-uploading the same file
         }
     }
+
 
     // --- Note Selection Modal Handlers ---
 
