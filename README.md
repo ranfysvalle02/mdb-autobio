@@ -164,6 +164,62 @@ source_instruction = "Base your questions STRICTLY on the provided notes. Do not
 
 This constraint is what transforms a generic AI into a precision tool for learning and assessment.
 
+
+-----
+
+# Appendix D: Sharing and Collaboration
+
+The application provides two distinct methods for gathering notes from others: **Individual Contributor Invites** and **Public Sharable Links**. Each method is designed for a different collaboration scenario.
+
+---
+
+## A.1: Individual Contributor Invites (High Control)
+
+This method is designed for inviting specific, named individuals to contribute. It offers the highest level of control and attribution.
+
+### How It Works
+
+1.  **Generation**: The project owner uses the "Invite a Contributor" form, providing a **Name/Label** (e.g., "Dr. Alice Smith") and a specific prompt.
+2.  **Token Creation**: The backend generates a **unique token** for that specific label and saves it in the `invited_users_collection`.
+3.  **Distribution**: The project owner sends the unique URL (`/invite/<unique_token>`) directly to that individual.
+4.  **Contribution**: When Dr. Smith follows the link, the system already knows who she is. Any note she submits is automatically labeled with "Dr. Alice Smith". She cannot change this label.
+
+### Use Cases
+
+* **Formal Reviews**: When you need attributable feedback from specific stakeholders.
+* **Structured Interviews**: Guiding an individual through a series of questions where their identity is key.
+* **High Accountability**: Any scenario where knowing exactly who contributed each piece of information is critical.
+
+---
+
+## A.2: Public Sharable Links (Group Collaboration)
+
+This method is the ideal way to "share with a group." It creates a single, reusable link that can be posted in a team chat, sent in a group email, or shared widely.
+
+### How It Works
+
+1.  **Generation**: The project owner uses the "Generate Sharable Link" form, providing a single prompt for the entire group.
+2.  **Token Creation**: The backend generates a **single, reusable token** and saves it in the `shared_invites_collection`.
+3.  **Distribution**: The owner shares the single URL (`/share/<shared_token>`) with the entire group.
+4.  **Contribution**: When a group member clicks the link, they are taken to a public contribution page (as seen in the `share.html` template). Before submitting their note, they are **required to enter their own name**. This allows many different people to use the same link while still self-identifying. The submitted note is then tagged with the name they entered.
+
+### Use Cases
+
+* **Team Brainstorming**: Quickly gathering ideas from a team without needing to create individual links.
+* **Open Feedback**: Collecting suggestions or feedback from a large, undefined group like a customer mailing list.
+* **Low-Friction Collaboration**: Any situation where ease of access is more important than strict, pre-defined attribution.
+
+---
+
+## Comparison Summary
+
+| Feature | Individual Invites | Public Sharable Links (Groups) |
+| :--- | :--- | :--- |
+| **Control** | **High**: Contributor label is pre-defined and locked. | **Low**: Contributors enter their own name. |
+| **Effort** | **High**: Must generate a unique link for each person. | **Low**: One link for everyone. |
+| **Attribution** | **Guaranteed**: You set the contributor's name. | **User-Provided**: Relies on users to identify themselves. |
+| **Best For** | Formal reviews, expert consultation, interviews. | Team brainstorming, open feedback, informal collaboration. |
+
 -----
 
 ## Conclusion: The Virtuous Cycle of Insight
