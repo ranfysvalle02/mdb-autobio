@@ -4,7 +4,7 @@
  * This file handles user interactions for the workspace, project view, and invite pages.
  * It manages state, handles API communications for creating projects, notes, and AI-generated content,
  * and dynamically renders UI components.
- * @version 2.3.0 (Updated file upload to use external conversion service)
+ * @version 2.4.0 (Added 'Add From Web' functionality)
  */
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -19,16 +19,18 @@ document.addEventListener('DOMContentLoaded', () => {
         projectName: jsData?.dataset.projectName,
         isAtlas: jsData?.dataset.isAtlas === 'True',
         inviteToken: jsData?.dataset.inviteToken,
-        // Endpoint for the external file-to-markdown conversion service
         doclingEndpoint: "https://ranfysvalle02--modal-docling-latest-extract.modal.run",
     };
 
-    // Determine the current view to attach specific event listeners
+    // API endpoints for web search feature
+    const WEB_SEARCH_API = "https://ranfysvalle02--oblivious-web-search.modal.run";
+    const WEB_INDEX_API = "https://ranfysvalle02--oblivious-web-index.modal.run";
+    const WEB_AI_API = "https://ranfysvalle02--oblivious-web-api-ai.modal.run";
+
     const isWorkspaceView = !!document.getElementById('new-project-form');
     const isProjectView = !!document.getElementById('project-notes') && !!config.projectId;
     const isInviteView = !!document.getElementById('invite-note-form') && !!config.inviteToken;
 
-    // --- State for dynamic UI elements ---
     let projectViewState = {
         currentPage: 1,
         isLoading: false,
@@ -39,8 +41,8 @@ document.addEventListener('DOMContentLoaded', () => {
     let modalState = {
         activeAIAction: null,
         quizGenerationOptions: {},
-        selectedNotes: [], // Holds full note objects for API calls
-        noteSelectionCandidates: new Map(), // Caches notes for the selection modal
+        selectedNotes: [],
+        noteSelectionCandidates: new Map(),
         previewState: {
             searchQuery: '',
             selectedTags: [],
@@ -48,15 +50,17 @@ document.addEventListener('DOMContentLoaded', () => {
             totalPages: 1,
             searchType: 'vector'
         },
+        webSearchContext: {
+            url: '',
+            text: '',
+            aiResponse: ''
+        }
     };
 
     // =================================================================================
     // --- 🚀 APP INITIALIZATION ---
     // =================================================================================
 
-    /**
-     * Initializes the application by setting up listeners based on the current page.
-     */
     function initializePage() {
         if (isWorkspaceView) setupWorkspaceViewListeners();
         if (isProjectView) setupProjectViewListeners();
@@ -89,6 +93,13 @@ document.addEventListener('DOMContentLoaded', () => {
         document.getElementById('launch-story-builder-btn')?.addEventListener('click', () => launchAIAction('generate-story', 'Select Notes to Weave a Story'));
         document.getElementById('launch-study-guide-btn')?.addEventListener('click', () => launchAIAction('generate-study-guide', 'Select Notes for Study Guide'));
         document.getElementById('quiz-options-form')?.addEventListener('submit', handleQuizOptionsSubmit);
+        
+        // --- Add From Web Modal ---
+        document.getElementById('web-search-btn')?.addEventListener('click', handleWebSearch);
+        document.getElementById('web-search-results-container')?.addEventListener('click', handleSearchResultClick);
+        document.getElementById('web-submit-ai-btn')?.addEventListener('click', handleSubmitToAI);
+        document.getElementById('web-add-as-note-btn')?.addEventListener('click', handleAddWebNote);
+        document.querySelector('[data-modal-target="add-from-web-modal"]')?.addEventListener('click', resetWebModal);
 
         // --- Note Selection Modal ---
         document.getElementById('confirm-action-btn')?.addEventListener('click', handleConfirmAIAction);
@@ -112,15 +123,12 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function setupGlobalListeners() {
-        // --- Modal Triggers ---
         document.querySelectorAll('[data-modal-target]').forEach(trigger => {
             trigger.addEventListener('click', () => document.getElementById(trigger.dataset.modalTarget)?.classList.remove('hidden'));
         });
         document.querySelectorAll('.modal-close-btn').forEach(button => {
             button.addEventListener('click', () => button.closest('.fixed.inset-0')?.classList.add('hidden'));
         });
-
-        // --- Delegated Clipboard Buttons ---
         document.body.addEventListener('click', handleClipboardButtonClick);
     }
 
@@ -129,41 +137,21 @@ document.addEventListener('DOMContentLoaded', () => {
     // --- 📡 API & DATA FETCHING ---
     // =================================================================================
 
-    /**
-     * A generic wrapper for the Fetch API to handle common tasks.
-     * @param {string} url - The URL to fetch.
-     * @param {object} options - Fetch options (method, headers, body).
-     * @returns {Promise<object>} - The JSON response from the server.
-     * @throws {Error} - Throws an error with a user-friendly message if the request fails.
-     */
     async function apiFetch(url, options = {}) {
-        options.headers = {
-            'Content-Type': 'application/json',
-            ...options.headers
-        };
+        options.headers = { 'Content-Type': 'application/json', ...options.headers };
         try {
             const response = await fetch(url, options);
             const data = await response.json();
-            if (!response.ok) {
-                throw new Error(data.message || data.error || 'An unknown API error occurred.');
-            }
+            if (!response.ok) throw new Error(data.message || data.error || 'An unknown API error occurred.');
             return data;
         } catch (error) {
             console.error(`API Fetch Error (${url}):`, error);
-            // Re-throw with a cleaner message for the UI handler
             throw new Error(error.message);
         }
     }
 
-    /**
-     * Fetches notes for the current project with pagination for infinite scroll.
-     * @param {boolean} isNewFilter - If true, resets pagination and clears existing notes.
-     */
     async function fetchNotes(isNewFilter = false) {
-        const {
-            isLoading,
-            hasMorePages
-        } = projectViewState;
+        const { isLoading, hasMorePages } = projectViewState;
         if (isLoading || (!hasMorePages && !isNewFilter)) return;
 
         projectViewState.isLoading = true;
@@ -189,7 +177,6 @@ document.addEventListener('DOMContentLoaded', () => {
             } else {
                 projectViewState.hasMorePages = false;
                 if (projectViewState.currentPage === 1 && notesContainer?.innerHTML === '') {
-                    // FIX: Add a specific class to target for removal later
                     notesContainer.innerHTML = `<p class="no-notes-message text-slate-500 text-center col-span-full py-8">No notes found for this filter.</p>`;
                 }
             }
@@ -201,25 +188,13 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
-    /**
-     * Fetches and renders notes inside the Note Selection modal based on search/filter criteria.
-     */
     async function fetchAndRenderPreviewNotes() {
-        const {
-            searchQuery,
-            selectedTags,
-            currentPage,
-            searchType
-        } = modalState.previewState;
-        const params = new URLSearchParams({
-            page: currentPage,
-            q: searchQuery,
-            tags: selectedTags.join(',')
-        });
+        const { searchQuery, selectedTags, currentPage, searchType } = modalState.previewState;
+        const params = new URLSearchParams({ page: currentPage, q: searchQuery, tags: selectedTags.join(',') });
         if (config.isAtlas) params.append('search_type', searchType);
 
         const previewNotesContainer = document.getElementById('preview-notes-container');
-        previewNotesContainer.innerHTML = '<div class="spinner mx-auto my-4"></div>'; // Show loader
+        previewNotesContainer.innerHTML = '<div class="spinner mx-auto my-4"></div>';
 
         try {
             const data = await apiFetch(`/api/search-notes/${config.projectId}?${params.toString()}`);
@@ -241,10 +216,9 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // =================================================================================
-    // --- 📥 EVENT HANDLERS ---
+    // --- 📥 EVENT HANDLERS (Forms, Buttons, etc.) ---
     // =================================================================================
 
-    // --- Form Submissions ---
     async function handleNewProjectSubmit(e) {
         e.preventDefault();
         const form = e.target;
@@ -290,13 +264,12 @@ document.addEventListener('DOMContentLoaded', () => {
             document.getElementById('note-tags-input').value = '';
             document.getElementById('tag-suggestions-container').innerHTML = '';
             
-            // FIX: Only remove the "No notes" message, don't clear all notes.
             const noNotesMessage = document.querySelector('#notes-container .no-notes-message');
             if (noNotesMessage) {
                 noNotesMessage.remove();
             }
             
-            renderNote(result.note, true); // Prepend the new note
+            renderNote(result.note, true);
         } catch (error) {
             showToast(error.message, 'error');
         }
@@ -419,9 +392,6 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
-
-    // --- AI Modal & Interaction Handlers ---
-
     function handleQuizOptionsSubmit(e) {
         e.preventDefault();
         modalState.quizGenerationOptions = {
@@ -523,7 +493,6 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
-    // --- Other UI Interaction Handlers ---
     function handleInfiniteScroll() {
         if (!projectViewState.isLoading && projectViewState.hasMorePages && (window.innerHeight + window.scrollY) >= document.body.offsetHeight - 500) {
             fetchNotes();
@@ -561,10 +530,6 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
     
-    /**
-     * Handles file upload, sends it to an external conversion service,
-     * and populates the note textarea with the resulting markdown.
-     */
     async function handleFileUpload(e) {
         const file = e.target.files[0];
         if (!file) return;
@@ -575,25 +540,20 @@ document.addEventListener('DOMContentLoaded', () => {
         showToast('Uploading & converting file...', 'info');
 
         const formData = new FormData();
-        formData.append('file', file); // Use 'file' key as per the demo endpoint
+        formData.append('file', file);
 
         try {
-            // Use the new endpoint from the config object
             const response = await fetch(config.doclingEndpoint, {
                 method: 'POST',
                 body: formData
-                // No 'Content-Type' header needed; the browser sets it for FormData
             });
 
             const data = await response.json();
             
-            // Check for errors based on the demo's logic
             if (!response.ok) {
-                // Use the 'detail' key from FastAPI's error response if available
                 throw new Error(data.detail || 'Failed to convert file.');
             }
             
-            // The demo returns markdown in a 'markdown' field
             const extractedText = data.markdown; 
             const existingText = noteContentTextarea.value.trim();
 
@@ -607,12 +567,9 @@ document.addEventListener('DOMContentLoaded', () => {
             showToast(`Conversion Error: ${error.message}`, 'error');
         } finally {
             spinner.classList.add('hidden');
-            e.target.value = ''; // Reset file input to allow re-uploading the same file
+            e.target.value = '';
         }
     }
-
-
-    // --- Note Selection Modal Handlers ---
 
     function handlePreviewSearchInput(e) {
         clearTimeout(projectViewState.searchDebounceTimer);
@@ -666,18 +623,13 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
     
-    /**
-     * Selects all notes currently visible in the preview pane.
-     */
     function handleSelectAllNotes() {
-        // Add all candidates from the current view to the selection
         modalState.noteSelectionCandidates.forEach((note, noteId) => {
             if (!modalState.selectedNotes.some(n => n._id === noteId)) {
                 modalState.selectedNotes.push(note);
             }
         });
 
-        // Visually check all the checkboxes
         document.querySelectorAll('#preview-notes-container .note-preview-checkbox').forEach(checkbox => {
             checkbox.checked = true;
         });
@@ -685,213 +637,14 @@ document.addEventListener('DOMContentLoaded', () => {
         updateSelectedNotesUI();
     }
     
-    /**
-     * Deselects all currently selected notes.
-     */
     function handleDeselectAllNotes() {
-        // Clear the selection array
         modalState.selectedNotes = [];
-
-        // Visually uncheck all the checkboxes
         document.querySelectorAll('#preview-notes-container .note-preview-checkbox').forEach(checkbox => {
             checkbox.checked = false;
         });
-
         updateSelectedNotesUI();
     }
 
-    // =================================================================================
-    // --- 🎨 UI RENDERING & HELPERS ---
-    // =================================================================================
-
-    /**
-     * Renders a single note card into the main notes container.
-     * @param {object} note - The note object from the API.
-     * @param {boolean} prepend - If true, adds the note to the top of the list.
-     */
-    function renderNote(note, prepend = false) {
-        const notesContainer = document.getElementById('notes-container');
-        if (!notesContainer) return;
-
-        const noteCard = document.createElement('div');
-        noteCard.className = 'note-card';
-        const tagsHTML = note.tags?.length > 0 ? note.tags.map(t => `<span class="tag">${sanitizeHTML(t)}</span>`).join('') : '';
-        const formattedContent = sanitizeHTML(note.content).replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>').replace(/\n/g, '<br>');
-
-        noteCard.innerHTML = `
-            <div class="flex flex-wrap items-center gap-2 mb-3">
-                <span class="contributor-tag">${sanitizeHTML(note.contributor_label)}</span>
-                ${tagsHTML}
-            </div>
-            <p class="note-timestamp">${note.formatted_timestamp}</p>
-            <div class="note-content">${formattedContent}</div>`;
-
-        if (prepend) {
-            notesContainer.prepend(noteCard);
-        } else {
-            notesContainer.appendChild(noteCard);
-        }
-    }
-
-    /**
-     * Renders a link result in the UI after token generation.
-     * @param {HTMLElement} resultDiv - The container to render the result into.
-     * @param {string} label - The label for the person/group.
-     * @param {string} url - The URL to be shared.
-     */
-    function renderTokenResult(resultDiv, label, url) {
-        const withWhom = label === "Anyone" ? "Anyone with this link can contribute:" : `Share this unique link with ${sanitizeHTML(label)}:`;
-        resultDiv.innerHTML = `
-            <p class="text-sm font-medium text-slate-700 mb-2">${withWhom}</p>
-            <div class="flex items-center space-x-2">
-                <input type="text" value="${url}" readonly class="form-input flex-grow bg-slate-100">
-                <button type="button" class="btn btn-secondary flex-shrink-0 copy-link-btn" data-url="${url}">Copy</button>
-            </div>`;
-    }
-
-    /**
-     * Creates and returns a DOM element for a note in the selection modal.
-     * @param {object} note - The note object.
-     * @returns {HTMLElement} - The created div element.
-     */
-    function createPreviewNoteElement(note) {
-        const isSelected = modalState.selectedNotes.some(n => n._id === note._id);
-        const element = document.createElement('div');
-        element.className = 'p-3 border rounded-md bg-white flex items-start space-x-3 transition-colors hover:bg-slate-50 cursor-pointer';
-        element.dataset.noteId = note._id;
-
-        const contentPreview = note.content.substring(0, 150) + (note.content.length > 150 ? '...' : '');
-
-        element.innerHTML = `
-            <input type="checkbox" data-note-id="${note._id}" class="note-preview-checkbox mt-1 h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 pointer-events-none" ${isSelected ? 'checked' : ''}>
-            <div class="flex-1">
-                <label class="block text-xs font-bold text-slate-500">${sanitizeHTML(note.contributor_label)}</label>
-                <p class="text-sm text-slate-800">${sanitizeHTML(contentPreview)}</p>
-            </div>`;
-
-        element.addEventListener('click', () => {
-            const checkbox = element.querySelector('.note-preview-checkbox');
-            checkbox.checked = !checkbox.checked;
-            // Manually dispatch a change event
-            checkbox.dispatchEvent(new Event('change', {
-                bubbles: true
-            }));
-        });
-
-        return element;
-    }
-
-    /** Renders pagination controls for the note selection modal. */
-    function renderPagination() {
-        const {
-            currentPage,
-            totalPages
-        } = modalState.previewState;
-        const container = document.getElementById('preview-pagination-container');
-        if (!container) return;
-        container.innerHTML = `
-            <button class="pagination-btn" data-page="${currentPage - 1}" ${currentPage <= 1 ? 'disabled' : ''}>Prev</button>
-            <span class="text-sm text-slate-600">Page ${currentPage} of ${totalPages || 1}</span>
-            <button class="pagination-btn" data-page="${currentPage + 1}" ${currentPage >= totalPages ? 'disabled' : ''}>Next</button>`;
-    }
-
-    /** Updates the UI that shows which notes are currently selected. */
-    function updateSelectedNotesUI() {
-        const countEl = document.getElementById('selected-notes-count');
-        const containerEl = document.getElementById('selected-notes-container');
-        if (!countEl || !containerEl) return;
-
-        const count = modalState.selectedNotes.length;
-        countEl.textContent = count;
-        document.getElementById('confirm-action-btn').disabled = count === 0;
-
-        containerEl.innerHTML = '';
-        modalState.selectedNotes.forEach(note => {
-            const noteDiv = document.createElement('div');
-            noteDiv.className = 'p-2 border text-sm bg-white rounded shadow-sm animate-fade-in';
-            noteDiv.textContent = note.content.substring(0, 70) + (note.content.length > 70 ? '...' : '');
-            containerEl.appendChild(noteDiv);
-        });
-    }
-
-    /** Renders AI-suggested follow-up questions on the invite page. */
-    function renderFollowUps(questions) {
-        const container = document.getElementById('follow-up-container');
-        const list = document.getElementById('follow-up-list');
-        if (!container || !list) return;
-
-        list.innerHTML = '';
-        if (questions && questions.length > 0) {
-            questions.forEach(q => {
-                const li = document.createElement('li');
-                li.className = 'p-4 bg-indigo-50/80 text-indigo-800 rounded-lg cursor-pointer hover:bg-indigo-100 transition-all duration-200 ease-in-out transform hover:scale-[1.02]';
-                li.textContent = q;
-                list.appendChild(li);
-            });
-            container.classList.remove('hidden');
-        } else {
-            container.classList.add('hidden');
-        }
-    }
-
-
-    // =================================================================================
-    // --- 🛠️ UTILITY & HELPER FUNCTIONS ---
-    // =================================================================================
-
-    /**
-     * Resets state and opens the note selection modal for an AI action.
-     * @param {string} action - The AI action identifier (e.g., 'generate-story').
-     * @param {string} title - The title to display on the modal.
-     */
-    function launchAIAction(action, title) {
-        modalState.activeAIAction = action;
-        modalState.selectedNotes = [];
-        modalState.noteSelectionCandidates.clear();
-        modalState.previewState = {
-            searchQuery: '',
-            selectedTags: [],
-            currentPage: 1,
-            totalPages: 1,
-            searchType: 'vector'
-        };
-
-        document.getElementById('note-selection-title').textContent = title;
-        document.getElementById('preview-search-input').value = '';
-        document.getElementById('preview-search-type').value = 'vector';
-        document.getElementById('search-type-selector-container')?.classList.toggle('hidden', !config.isAtlas);
-
-        updateSelectedNotesUI();
-        fetchAndRenderTagsForModal();
-        fetchAndRenderPreviewNotes();
-        document.getElementById('note-selection-modal').classList.remove('hidden');
-    }
-
-    /** Fetches and populates the contributor filter dropdown. */
-    async function populateContributors() {
-        const filterEl = document.getElementById('contributor-filter');
-        if (!filterEl) return;
-        try {
-            const contributors = await apiFetch(`/api/contributors/${config.projectId}`);
-            filterEl.innerHTML = contributors.map(c => `<option value="${c}">${c}</option>`).join('');
-        } catch (error) {
-            console.error('Failed to populate contributors:', error);
-        }
-    }
-
-    /** Fetches and renders tags for the filter section in the note selection modal. */
-    async function fetchAndRenderTagsForModal() {
-        const container = document.getElementById('preview-tags-container');
-        if (!container) return;
-        try {
-            const tags = await apiFetch(`/api/get-tags/${config.projectId}`);
-            container.innerHTML = tags.map(tag => `<label class="flex items-center space-x-2 cursor-pointer p-1 rounded hover:bg-indigo-50"><input type="checkbox" class="tag-checkbox" value="${tag}"><span>${tag}</span></label>`).join('');
-        } catch (error) {
-            console.error('Failed to fetch tags:', error);
-        }
-    }
-
-    /** Handles the click of the "Suggest Tags" button. */
     async function handleSuggestTags() {
         const content = document.getElementById('note-content').value.trim();
         const btn = document.getElementById('suggest-tags-btn');
@@ -924,7 +677,326 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
-    /** Adds a tag to the tag input field, avoiding duplicates. */
+    // =================================================================================
+    // --- 🌐 WEB IMPORT HANDLERS ---
+    // =================================================================================
+
+    function resetWebModal() {
+        modalState.webSearchContext = { url: '', text: '', aiResponse: '' };
+        document.getElementById('web-search-input').value = '';
+        document.getElementById('web-search-results-container').innerHTML = '';
+        document.getElementById('web-content-section').classList.add('hidden');
+        document.getElementById('web-content-preview').textContent = '';
+        document.getElementById('web-ai-question-input').value = "Summarize the key points from this content. Include a title and format the output in markdown.";
+        document.getElementById('web-ai-response-container').classList.add('hidden');
+        document.getElementById('web-ai-response-content').innerHTML = '';
+    }
+
+    async function handleWebSearch() {
+        const input = document.getElementById('web-search-input');
+        const query = input.value.trim();
+        if (!query) return showToast('Please enter a search query.', 'error');
+
+        const searchBtn = document.getElementById('web-search-btn');
+        const resultsContainer = document.getElementById('web-search-results-container');
+        
+        document.getElementById('web-content-section').classList.add('hidden');
+        document.getElementById('web-ai-response-container').classList.add('hidden');
+
+        setButtonLoading(searchBtn, 'Searching...');
+        resultsContainer.innerHTML = '<div class="spinner mx-auto my-4"></div>';
+
+        try {
+            const searchUrl = `${WEB_SEARCH_API}?region=us-en&query=${encodeURIComponent(query)}`;
+            const response = await fetch(searchUrl);
+            if (!response.ok) throw new Error(`Search failed with status: ${response.status}`);
+            const data = await response.json();
+
+            if (!data.results || data.results.length === 0) {
+                resultsContainer.innerHTML = '<p class="text-slate-500 text-center">No results found.</p>';
+                return;
+            }
+            renderWebSearchResults(data.results);
+        } catch (error) {
+            showToast(error.message, 'error');
+            resultsContainer.innerHTML = `<p class="text-red-500 text-center">Error: ${error.message}</p>`;
+        } finally {
+            setButtonActive(searchBtn, 'Search');
+        }
+    }
+
+    function renderWebSearchResults(results) {
+        const container = document.getElementById('web-search-results-container');
+        container.innerHTML = `<h4 class="font-bold text-lg text-slate-800 mb-2">Search Results</h4>`;
+        const list = document.createElement('ul');
+        list.className = 'space-y-3';
+        
+        results.slice(0, 5).forEach(result => {
+            const li = document.createElement('li');
+            li.innerHTML = `
+                <a href="#" data-url="${sanitizeHTML(result.link)}" class="web-result-link block p-3 border rounded-md hover:bg-indigo-50 hover:border-indigo-300 transition-colors">
+                    <span class="text-indigo-700 font-semibold">${sanitizeHTML(result.title)}</span>
+                    <p class="text-sm text-slate-600 mt-1">${sanitizeHTML(result.description)}</p>
+                    <span class="text-xs text-green-700 block mt-1">${sanitizeHTML(result.display_link)}</span>
+                </a>`;
+            list.appendChild(li);
+        });
+        container.appendChild(list);
+    }
+
+    async function handleSearchResultClick(e) {
+        e.preventDefault();
+        const link = e.target.closest('.web-result-link');
+        if (!link) return;
+
+        const url = link.dataset.url;
+        modalState.webSearchContext.url = url;
+
+        const contentSection = document.getElementById('web-content-section');
+        const previewContainer = document.getElementById('web-content-preview');
+        
+        document.querySelectorAll('.web-result-link').forEach(el => el.classList.remove('bg-indigo-100', 'border-indigo-400'));
+        link.classList.add('bg-indigo-100', 'border-indigo-400');
+        contentSection.classList.remove('hidden');
+        previewContainer.textContent = 'Fetching content from page...';
+
+        try {
+            const indexUrl = `${WEB_INDEX_API}/?url=${encodeURIComponent(url)}`;
+            const response = await fetch(indexUrl);
+            if (!response.ok) throw new Error(`Failed to fetch page content. Status: ${response.status}`);
+            const markdownText = await response.text();
+            
+            modalState.webSearchContext.text = markdownText;
+            previewContainer.textContent = markdownText;
+        } catch (error) {
+            previewContainer.textContent = `Error fetching content: ${error.message}`;
+            showToast(error.message, 'error');
+        }
+    }
+
+    async function handleSubmitToAI() {
+        const question = document.getElementById('web-ai-question-input').value.trim();
+        if (!question) return showToast('Please enter a prompt for the AI.', 'error');
+        if (!modalState.webSearchContext.text) return showToast('No page content available to process.', 'error');
+
+        const submitBtn = document.getElementById('web-submit-ai-btn');
+        const responseContainer = document.getElementById('web-ai-response-container');
+        const responseContent = document.getElementById('web-ai-response-content');
+
+        setButtonLoading(submitBtn, 'Generating...');
+        responseContainer.classList.remove('hidden');
+        responseContent.innerHTML = '<div class="spinner mx-auto my-4"></div>';
+
+        const payload = {
+            context: [{ url: modalState.webSearchContext.url, text: modalState.webSearchContext.text }],
+            user_input: question
+        };
+
+        try {
+            const response = await fetch(WEB_AI_API, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload),
+            });
+            if (!response.ok) throw new Error(`AI API error: ${response.status}`);
+            const data = await response.json();
+            
+            modalState.webSearchContext.aiResponse = data.ai_response;
+            responseContent.innerHTML = convertMarkdownToHtml(data.ai_response);
+        } catch (error) {
+            responseContent.innerHTML = `<p class="text-red-500">Error: ${error.message}</p>`;
+            showToast(error.message, 'error');
+        } finally {
+            setButtonActive(submitBtn, 'Generate Note');
+        }
+    }
+
+    async function handleAddWebNote() {
+        const { aiResponse, url: sourceUrl } = modalState.webSearchContext;
+        if (!aiResponse) return showToast('No AI content to add.', 'error');
+        
+        const content = `${aiResponse}\n\n---\n**Source:** ${sourceUrl}`;
+        const addBtn = document.getElementById('web-add-as-note-btn');
+        setButtonLoading(addBtn, 'Adding...');
+
+        try {
+            const result = await apiFetch('/api/notes', {
+                method: 'POST',
+                body: JSON.stringify({
+                    content,
+                    project_id: config.projectId,
+                    tags: 'web-import, ai-summary'
+                })
+            });
+            
+            document.querySelector('#notes-container .no-notes-message')?.remove();
+            renderNote(result.note, true);
+            showToast('Note added from web!', 'success');
+            document.getElementById('add-from-web-modal').classList.add('hidden');
+
+        } catch (error) {
+            showToast(error.message, 'error');
+        } finally {
+            setButtonActive(addBtn, 'Add Note to Project');
+        }
+    }
+
+    // =================================================================================
+    // --- 🎨 UI RENDERING & HELPERS ---
+    // =================================================================================
+
+    function renderNote(note, prepend = false) {
+        const notesContainer = document.getElementById('notes-container');
+        if (!notesContainer) return;
+
+        const noteCard = document.createElement('div');
+        noteCard.className = 'note-card';
+        const tagsHTML = note.tags?.length > 0 ? note.tags.map(t => `<span class="tag">${sanitizeHTML(t)}</span>`).join('') : '';
+        const formattedContent = sanitizeHTML(note.content).replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>').replace(/\n/g, '<br>');
+
+        noteCard.innerHTML = `
+            <div class="flex flex-wrap items-center gap-2 mb-3">
+                <span class="contributor-tag">${sanitizeHTML(note.contributor_label)}</span>
+                ${tagsHTML}
+            </div>
+            <p class="note-timestamp">${note.formatted_timestamp}</p>
+            <div class="note-content">${formattedContent}</div>`;
+
+        if (prepend) {
+            notesContainer.prepend(noteCard);
+        } else {
+            notesContainer.appendChild(noteCard);
+        }
+    }
+
+    function renderTokenResult(resultDiv, label, url) {
+        const withWhom = label === "Anyone" ? "Anyone with this link can contribute:" : `Share this unique link with ${sanitizeHTML(label)}:`;
+        resultDiv.innerHTML = `
+            <p class="text-sm font-medium text-slate-700 mb-2">${withWhom}</p>
+            <div class="flex items-center space-x-2">
+                <input type="text" value="${url}" readonly class="form-input flex-grow bg-slate-100">
+                <button type="button" class="btn btn-secondary flex-shrink-0 copy-link-btn" data-url="${url}">Copy</button>
+            </div>`;
+    }
+
+    function createPreviewNoteElement(note) {
+        const isSelected = modalState.selectedNotes.some(n => n._id === note._id);
+        const element = document.createElement('div');
+        element.className = 'p-3 border rounded-md bg-white flex items-start space-x-3 transition-colors hover:bg-slate-50 cursor-pointer';
+        element.dataset.noteId = note._id;
+
+        const contentPreview = note.content.substring(0, 150) + (note.content.length > 150 ? '...' : '');
+
+        element.innerHTML = `
+            <input type="checkbox" data-note-id="${note._id}" class="note-preview-checkbox mt-1 h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 pointer-events-none" ${isSelected ? 'checked' : ''}>
+            <div class="flex-1">
+                <label class="block text-xs font-bold text-slate-500">${sanitizeHTML(note.contributor_label)}</label>
+                <p class="text-sm text-slate-800">${sanitizeHTML(contentPreview)}</p>
+            </div>`;
+
+        element.addEventListener('click', () => {
+            const checkbox = element.querySelector('.note-preview-checkbox');
+            checkbox.checked = !checkbox.checked;
+            checkbox.dispatchEvent(new Event('change', {
+                bubbles: true
+            }));
+        });
+
+        return element;
+    }
+
+    function renderPagination() {
+        const { currentPage, totalPages } = modalState.previewState;
+        const container = document.getElementById('preview-pagination-container');
+        if (!container) return;
+        container.innerHTML = `
+            <button class="pagination-btn" data-page="${currentPage - 1}" ${currentPage <= 1 ? 'disabled' : ''}>Prev</button>
+            <span class="text-sm text-slate-600">Page ${currentPage} of ${totalPages || 1}</span>
+            <button class="pagination-btn" data-page="${currentPage + 1}" ${currentPage >= totalPages ? 'disabled' : ''}>Next</button>`;
+    }
+
+    function updateSelectedNotesUI() {
+        const countEl = document.getElementById('selected-notes-count');
+        const containerEl = document.getElementById('selected-notes-container');
+        if (!countEl || !containerEl) return;
+
+        const count = modalState.selectedNotes.length;
+        countEl.textContent = count;
+        document.getElementById('confirm-action-btn').disabled = count === 0;
+
+        containerEl.innerHTML = '';
+        modalState.selectedNotes.forEach(note => {
+            const noteDiv = document.createElement('div');
+            noteDiv.className = 'p-2 border text-sm bg-white rounded shadow-sm animate-fade-in';
+            noteDiv.textContent = note.content.substring(0, 70) + (note.content.length > 70 ? '...' : '');
+            containerEl.appendChild(noteDiv);
+        });
+    }
+
+    function renderFollowUps(questions) {
+        const container = document.getElementById('follow-up-container');
+        const list = document.getElementById('follow-up-list');
+        if (!container || !list) return;
+
+        list.innerHTML = '';
+        if (questions && questions.length > 0) {
+            questions.forEach(q => {
+                const li = document.createElement('li');
+                li.className = 'p-4 bg-indigo-50/80 text-indigo-800 rounded-lg cursor-pointer hover:bg-indigo-100 transition-all duration-200 ease-in-out transform hover:scale-[1.02]';
+                li.textContent = q;
+                list.appendChild(li);
+            });
+            container.classList.remove('hidden');
+        } else {
+            container.classList.add('hidden');
+        }
+    }
+
+    function launchAIAction(action, title) {
+        modalState.activeAIAction = action;
+        modalState.selectedNotes = [];
+        modalState.noteSelectionCandidates.clear();
+        modalState.previewState = {
+            searchQuery: '',
+            selectedTags: [],
+            currentPage: 1,
+            totalPages: 1,
+            searchType: 'vector'
+        };
+
+        document.getElementById('note-selection-title').textContent = title;
+        document.getElementById('preview-search-input').value = '';
+        document.getElementById('preview-search-type').value = 'vector';
+        document.getElementById('search-type-selector-container')?.classList.toggle('hidden', !config.isAtlas);
+
+        updateSelectedNotesUI();
+        fetchAndRenderTagsForModal();
+        fetchAndRenderPreviewNotes();
+        document.getElementById('note-selection-modal').classList.remove('hidden');
+    }
+
+    async function populateContributors() {
+        const filterEl = document.getElementById('contributor-filter');
+        if (!filterEl) return;
+        try {
+            const contributors = await apiFetch(`/api/contributors/${config.projectId}`);
+            filterEl.innerHTML = contributors.map(c => `<option value="${c}">${c}</option>`).join('');
+        } catch (error) {
+            console.error('Failed to populate contributors:', error);
+        }
+    }
+
+    async function fetchAndRenderTagsForModal() {
+        const container = document.getElementById('preview-tags-container');
+        if (!container) return;
+        try {
+            const tags = await apiFetch(`/api/get-tags/${config.projectId}`);
+            container.innerHTML = tags.map(tag => `<label class="flex items-center space-x-2 cursor-pointer p-1 rounded hover:bg-indigo-50"><input type="checkbox" class="tag-checkbox" value="${tag}"><span>${tag}</span></label>`).join('');
+        } catch (error) {
+            console.error('Failed to fetch tags:', error);
+        }
+    }
+
     function addTagToInput(tagToAdd) {
         const tagsInput = document.getElementById('note-tags-input');
         const currentTags = new Set(tagsInput.value.split(',').map(t => t.trim()).filter(Boolean));
@@ -932,7 +1004,6 @@ document.addEventListener('DOMContentLoaded', () => {
         tagsInput.value = Array.from(currentTags).join(', ');
     }
 
-    /** Displays a toast notification to the user. */
     function showToast(message, type = 'info') {
         const toast = document.createElement('div');
         const typeClasses = {
@@ -943,7 +1014,6 @@ document.addEventListener('DOMContentLoaded', () => {
         toast.className = `fixed bottom-5 right-5 text-white py-3 px-6 rounded-lg shadow-xl transition-all duration-300 transform translate-y-16 opacity-0 ${typeClasses[type]}`;
         toast.textContent = message;
 
-        // Create a global container for toasts if it doesn't exist
         let toastContainer = document.getElementById('toast-container');
         if (!toastContainer) {
             toastContainer = document.createElement('div');
@@ -952,13 +1022,11 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         toastContainer.appendChild(toast);
 
-        // Animate in
         setTimeout(() => {
             toast.classList.remove('translate-y-16', 'opacity-0');
             toast.classList.add('translate-y-0', 'opacity-100');
         }, 100);
 
-        // Animate out and remove
         setTimeout(() => {
             toast.classList.remove('translate-y-0', 'opacity-100');
             toast.classList.add('translate-y-16', 'opacity-0');
@@ -966,43 +1034,32 @@ document.addEventListener('DOMContentLoaded', () => {
         }, 4000);
     }
 
-    /** Sanitizes a string to prevent XSS. */
     function sanitizeHTML(str) {
         const temp = document.createElement('div');
         temp.textContent = str;
         return temp.innerHTML;
     }
 
-    /**
-     * Converts a string of Markdown into safe HTML.
-     * @param {string} markdown - The markdown text.
-     * @returns {string} - The resulting HTML string.
-     */
     function convertMarkdownToHtml(markdown) {
         let html = sanitizeHTML(markdown);
 
-        // Headers (h1, h2, h3)
         html = html.replace(/^### (.*$)/gim, '<h3>$1</h3>')
             .replace(/^## (.*$)/gim, '<h2>$1</h2>')
             .replace(/^# (.*$)/gim, '<h1>$1</h1>');
 
-        // Bold and Italic
         html = html.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
             .replace(/\*(.*?)\*/g, '<em>$1</em>');
 
-        // Unordered Lists
         html = html.replace(/^- (.*(?:\n- .*)*)/gim, (match) => {
             const items = match.split('\n- ').map(item => `<li>${item.replace(/^- /, '')}</li>`).join('');
             return `<ul>${items}</ul>`;
         });
 
-        // Replace newlines with <br> tags, but not inside block elements like lists
         html = html.replace(/<\/ul>\n/g, '</ul>').replace(/\n/g, '<br>');
 
         return `<div class="prose max-w-none">${html}</div>`;
     }
 
-    /** Puts a button into a loading state. */
     function setButtonLoading(button, text = 'Loading...') {
         if (button) {
             button.disabled = true;
@@ -1010,14 +1067,12 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
     
-    /** Restores a button to its active state. */
     function setButtonActive(button, text) {
         if (button) {
             button.disabled = false;
             button.innerHTML = text;
         }
     }
-
 
     // =================================================================================
     // --- ▶️ RUN INITIALIZATION ---
