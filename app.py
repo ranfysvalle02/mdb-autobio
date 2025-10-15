@@ -14,7 +14,6 @@ from flask_login import (LoginManager, UserMixin, login_user, logout_user,
 from pymongo import MongoClient, TEXT
 from pymongo.errors import OperationFailure
 from werkzeug.security import generate_password_hash, check_password_hash
-from docling.document_converter import DocumentConverter
 from werkzeug.utils import secure_filename
 
 # load environment variables from .env file if present
@@ -546,35 +545,6 @@ def generate_shared_token():
     
     shared_url = url_for('shared_invite_page', token=new_token, _external=True)
     return jsonify({"status": "success", "shared_url": shared_url}), 201
-
-
-@app.route('/api/process-document', methods=['POST'])
-def process_document():
-    if 'document' not in request.files:
-        return jsonify({'error': 'No file part'}), 400
-    file = request.files['document']
-    if file.filename == '':
-        return jsonify({'error': 'No selected file'}), 400
-
-    if file:
-        filepath = None
-        try:
-            filename = secure_filename(file.filename)
-            filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
-            file.save(filepath)
-
-            converter = DocumentConverter()
-            result = converter.convert(filepath)
-            extracted_text = result.document.export_to_markdown()
-
-            os.remove(filepath)
-            return jsonify({'extracted_text': extracted_text})
-        except Exception as e:
-            if filepath and os.path.exists(filepath):
-                os.remove(filepath)
-            print(f"Error processing document: {e}")
-            return jsonify({'error': f'Failed to process file: {str(e)}'}), 500
-    return jsonify({'error': 'File processing failed'}), 500
 
 
 @app.route('/api/projects', methods=['POST'])
