@@ -173,6 +173,8 @@ NOTES_PER_PAGE = 10
 STORY_TONES = ["Nostalgic & Warm", "Comedic Monologue", "Hardboiled Detective", "Documentary Narrator", "Epic Saga",
                "Formal & Academic"]
 STORY_FORMATS = ["Short Story (3-5 paragraphs)", "Executive Summary (1 paragraph)", "Key Plot Points (Bulleted List)"]
+SONG_GENRES = ["Pop", "Folk", "Indie Rock", "Hip-Hop", "Electronic", "Country", "R&B"]
+SONG_MOODS = ["Upbeat & Hopeful", "Melancholic & Reflective", "Energetic & Anthemic", "Intimate & Acoustic", "Dark & Brooding"]
 
 
 # ----------------------------------------------------------------------
@@ -281,13 +283,11 @@ def get_ai_suggested_tags(project_id, entry_content):
         return []
 
 
-def get_ai_study_notes(topic, project_goal, num_notes=5): # MODIFIED
+def get_ai_study_notes(topic, project_goal, num_notes=5):
     if not openai.api_key: return []
     try:
-        # MODIFICATION START
         system_prompt = f"You are an expert educator creating study materials for a project with the goal: '{project_goal}'. Generate {num_notes} concise, well-structured study notes. Each note should be a standalone piece of information. For key terms, use markdown bolding (e.g., **Term**). Return a JSON object: {{\"notes\": [\"Note 1 content...\", \"Note 2 content...\"]}}."
         user_prompt = f"Generate {num_notes} study notes for the topic: '{topic}'."
-        # MODIFICATION END
         completion = openai.chat.completions.create(model="gpt-4o-mini",
                                                     messages=[{"role": "system", "content": system_prompt},
                                                               {"role": "user", "content": user_prompt}],
@@ -352,6 +352,36 @@ def get_ai_study_guide(notes_content, project_name):
         print(f"Error calling OpenAI for study guide generation: {e}")
         return "Error: Could not generate the study guide."
 
+def get_ai_song(notes_content, project_name, genre, mood):
+    """Generates song lyrics from notes."""
+    if not openai.api_key: return ""
+    try:
+        system_prompt = """
+        You are an expert songwriter. Your task is to transform a collection of notes into compelling song lyrics.
+        Use the provided notes as the core inspiration for themes, imagery, and narrative.
+        The lyrics should be well-structured. Use standard labels like [Verse 1], [Chorus], [Verse 2], [Bridge], and [Outro].
+        Capture the specified genre and mood in the lyrical style, tone, and content.
+        Return only the formatted song lyrics.
+        """
+        user_prompt = f"""
+        Project Name: "{project_name}"
+        Genre: {genre}
+        Mood: {mood}
+
+        Based on these notes, write a complete song:
+        ---
+        {notes_content}
+        ---
+        """
+        completion = openai.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{"role": "system", "content": system_prompt},
+                      {"role": "user", "content": user_prompt}]
+        )
+        return completion.choices[0].message.content
+    except Exception as e:
+        print(f"Error calling OpenAI for song generation: {e}")
+        return "Error: Could not generate the song lyrics."
 
 # ----------------------------------------------------------------------
 # --- Auth Routes ---
@@ -447,7 +477,9 @@ def project_view(project_id):
             'project.html', 
             project=project, 
             story_tones=STORY_TONES,
-            story_formats=STORY_FORMATS, # MODIFIED
+            story_formats=STORY_FORMATS,
+            song_genres=SONG_GENRES,
+            song_moods=SONG_MOODS,
             quizzes=quizzes, 
             is_atlas=IS_ATLAS,
             invited_users=invited_users,
@@ -650,7 +682,7 @@ def add_note():
 
 
 # ======================================================================
-# --- NEW: Edit and Delete Note API Routes ---
+# --- Edit and Delete Note API Routes ---
 # ======================================================================
 @app.route('/api/notes/<note_id>', methods=['PUT', 'DELETE'])
 @login_required
@@ -993,18 +1025,16 @@ def get_contributors(project_id):
 def generate_notes():
     if not openai.api_key: return jsonify({"error": "OpenAI API key is not configured."}), 500
     data = request.get_json()
-    # MODIFICATION START
     project_id = data.get('project_id')
     topic = data.get('topic', '').strip()
     num_notes = data.get('num_notes', 5)
-    # MODIFICATION END
     if not all([project_id, topic]):
         return jsonify({"error": "Project ID and topic are required."}), 400
 
     project = projects_collection.find_one({"_id": ObjectId(project_id), "user_id": ObjectId(current_user.id)})
     if not project: return jsonify({"error": "Project not found or unauthorized."}), 404
 
-    generated_notes_content = get_ai_study_notes(topic, project.get('project_goal', ''), num_notes) # MODIFIED
+    generated_notes_content = get_ai_study_notes(topic, project.get('project_goal', ''), num_notes)
     if not generated_notes_content: return jsonify({"error": "AI failed to generate notes."}), 500
     
     new_notes_docs = []
@@ -1087,12 +1117,10 @@ def generate_quiz():
 def generate_story():
     if not openai.api_key: return jsonify({"error": "OpenAI API key is not configured."}), 500
     data = request.get_json()
-    # MODIFICATION START
     project_name = data.get('project_name')
     tone = data.get('tone')
     story_format = data.get('format')
     selected_notes = data.get('notes', [])
-    # MODIFICATION END
 
     if not all([project_name, tone, story_format, selected_notes]):
         return jsonify({"error": "Project name, tone, format, and selected notes are required."}), 400
@@ -1111,9 +1139,7 @@ def generate_story():
         [f"- From {note.get('contributor_label', 'Me')}: \"{note.get('content', '')}\"\n" for note in selected_notes])
     try:
         system_prompt = "You are a master writer. Weave a collection of notes into a coherent, compelling narrative. If notes are from multiple contributors, synthesize them into a single voice or a structured dialogue, as appropriate."
-        # MODIFICATION START
         user_prompt = f"Synthesize these notes from the \"{project_name}\" project into a narrative with a \"{tone}\" tone, formatted as a \"{story_format}\". Connect the ideas, infer themes, and create a fluid arc.\n\nNotes:\n{formatted_notes}"
-        # MODIFICATION END
         completion = openai.chat.completions.create(model="gpt-4o-mini",
                                                     messages=[{"role": "system", "content": system_prompt},
                                                               {"role": "user", "content": user_prompt}])
@@ -1144,6 +1170,36 @@ def generate_study_guide():
     study_guide_md = get_ai_study_guide(formatted_notes, project_name)
 
     return jsonify({"study_guide": study_guide_md})
+
+@app.route('/api/generate-song', methods=['POST'])
+@login_required
+def generate_song():
+    if not openai.api_key: return jsonify({"error": "OpenAI API key is not configured."}), 500
+    data = request.get_json()
+    project_name = data.get('project_name')
+    genre = data.get('genre')
+    mood = data.get('mood')
+    selected_notes = data.get('notes', [])
+
+    if not all([project_name, genre, mood, selected_notes]):
+        return jsonify({"error": "Project name, genre, mood, and selected notes are required."}), 400
+
+    try:
+        first_note_id = selected_notes[0].get('_id')
+        note_check = notes_collection.find_one({"_id": ObjectId(first_note_id), "user_id": ObjectId(current_user.id)})
+        if not note_check:
+            return jsonify({"error": "Unauthorized action."}), 403
+    except Exception:
+        return jsonify({"error": "Invalid note ID provided."}), 400
+
+    formatted_notes = "\n---\n".join([f"Note from {note.get('contributor_label', 'Me')}: \"{note.get('content', '')}\"" for note in selected_notes])
+    
+    song_lyrics = get_ai_song(formatted_notes, project_name, genre, mood)
+    
+    if "Error:" in song_lyrics:
+        return jsonify({"error": "Failed to generate song lyrics from AI."}), 500
+
+    return jsonify({"song_lyrics": song_lyrics})
 
 #ensure_atlas_indexes()
 app.static_folder = 'static'

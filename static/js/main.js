@@ -4,7 +4,7 @@
  * This file handles user interactions for the workspace, project view, and invite pages.
  * It manages state, handles API communications for creating projects, notes, and AI-generated content,
  * and dynamically renders UI components.
- * @version 2.4.0 (Added 'Add From Web' functionality)
+ * @version 2.6.0 (Added YouTube Search and Summarization functionality)
  */
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -26,6 +26,10 @@ document.addEventListener('DOMContentLoaded', () => {
     const WEB_SEARCH_API = "https://ranfysvalle02--oblivious-web-search.modal.run";
     const WEB_INDEX_API = "https://ranfysvalle02--oblivious-web-index.modal.run";
     const WEB_AI_API = "https://ranfysvalle02--oblivious-web-api-ai.modal.run";
+    
+    // --- NEW: API endpoints for YouTube search feature ---
+    const YT_SEARCH_API = "https://ranfysvalle02--yt-rag-run-ollama-demo.modal.run";
+    const YT_RAG_API = "https://ranfysvalle02--yt-rag-rag-it-up.modal.run";
 
     const isWorkspaceView = !!document.getElementById('new-project-form');
     const isProjectView = !!document.getElementById('project-notes') && !!config.projectId;
@@ -53,6 +57,12 @@ document.addEventListener('DOMContentLoaded', () => {
         webSearchContext: {
             url: '',
             text: '',
+            aiResponse: ''
+        },
+        // --- NEW: State for YouTube Modal ---
+        youtubeSearchContext: {
+            videoId: '',
+            videoTitle: '',
             aiResponse: ''
         }
     };
@@ -88,9 +98,11 @@ document.addEventListener('DOMContentLoaded', () => {
         document.getElementById('contributor-filter')?.addEventListener('change', () => fetchNotes(true));
         document.getElementById('note-image-upload')?.addEventListener('change', handleFileUpload);
         document.getElementById('tag-suggestions-container')?.addEventListener('click', handleTagSuggestionClick);
+        document.getElementById('notes-container')?.addEventListener('click', handleNoteActionClick);
 
         // --- AI Action Launchers ---
         document.getElementById('launch-story-builder-btn')?.addEventListener('click', () => launchAIAction('generate-story', 'Select Notes to Weave a Story'));
+        document.getElementById('launch-song-builder-btn')?.addEventListener('click', () => launchAIAction('generate-song', 'Select Notes to Create a Song'));
         document.getElementById('launch-study-guide-btn')?.addEventListener('click', () => launchAIAction('generate-study-guide', 'Select Notes for Study Guide'));
         document.getElementById('quiz-options-form')?.addEventListener('submit', handleQuizOptionsSubmit);
         
@@ -100,6 +112,13 @@ document.addEventListener('DOMContentLoaded', () => {
         document.getElementById('web-submit-ai-btn')?.addEventListener('click', handleSubmitToAI);
         document.getElementById('web-add-as-note-btn')?.addEventListener('click', handleAddWebNote);
         document.querySelector('[data-modal-target="add-from-web-modal"]')?.addEventListener('click', resetWebModal);
+        
+        // --- NEW: Add From YouTube Modal ---
+        document.querySelector('[data-modal-target="add-from-yt-modal"]')?.addEventListener('click', resetYouTubeModal);
+        document.getElementById('yt-search-btn')?.addEventListener('click', handleYouTubeSearch);
+        document.getElementById('yt-search-results-container')?.addEventListener('click', handleYouTubeResultClick);
+        document.getElementById('yt-summarize-btn')?.addEventListener('click', handleYouTubeSummarize);
+        document.getElementById('yt-add-as-note-btn')?.addEventListener('click', handleAddYouTubeNote);
 
         // --- Note Selection Modal ---
         document.getElementById('confirm-action-btn')?.addEventListener('click', handleConfirmAIAction);
@@ -411,6 +430,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const actionMap = {
             'generate-quiz': handleGenerateQuiz,
             'generate-story': handleGenerateStory,
+            'generate-song': handleGenerateSong,
             'generate-study-guide': handleGenerateStudyGuide,
         };
         const action = actionMap[modalState.activeAIAction];
@@ -448,6 +468,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     async function handleGenerateStory() {
         const selectedTone = document.getElementById('story-tone-select').value;
+        const selectedFormat = document.getElementById('story-format-select').value;
         const confirmBtn = document.getElementById('confirm-action-btn');
         setButtonLoading(confirmBtn, 'Weaving...');
 
@@ -457,6 +478,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 body: JSON.stringify({
                     project_name: config.projectName,
                     tone: selectedTone,
+                    format: selectedFormat,
                     notes: modalState.selectedNotes
                 })
             });
@@ -464,6 +486,33 @@ document.addEventListener('DOMContentLoaded', () => {
             document.getElementById('story-modal-title').textContent = `Your Story: ${config.projectName}`;
             document.getElementById('story-modal-content').innerHTML = `<div class="prose max-w-none">${sanitizeHTML(data.story).replace(/\n/g, '<br>')}</div>`;
             document.getElementById('story-modal').classList.remove('hidden');
+        } catch (error) {
+            showToast(error.message, 'error');
+        } finally {
+            setButtonActive(confirmBtn, 'Confirm Selection');
+        }
+    }
+    
+    async function handleGenerateSong() {
+        const selectedGenre = document.getElementById('song-genre-select').value;
+        const selectedMood = document.getElementById('song-mood-select').value;
+        const confirmBtn = document.getElementById('confirm-action-btn');
+        setButtonLoading(confirmBtn, 'Writing...');
+
+        try {
+            const data = await apiFetch('/api/generate-song', {
+                method: 'POST',
+                body: JSON.stringify({
+                    project_name: config.projectName,
+                    genre: selectedGenre,
+                    mood: selectedMood,
+                    notes: modalState.selectedNotes
+                })
+            });
+            document.getElementById('note-selection-modal').classList.add('hidden');
+            document.getElementById('song-modal-title').textContent = `Your Song: A ${selectedMood} ${selectedGenre} Track`;
+            document.getElementById('song-modal-content').innerHTML = `<div class="prose max-w-none">${sanitizeHTML(data.song_lyrics).replace(/\n/g, '<br>')}</div>`;
+            document.getElementById('song-modal').classList.remove('hidden');
         } catch (error) {
             showToast(error.message, 'error');
         } finally {
@@ -490,6 +539,26 @@ document.addEventListener('DOMContentLoaded', () => {
             showToast(error.message, 'error');
         } finally {
             setButtonActive(confirmBtn, 'Confirm Selection');
+        }
+    }
+    
+    async function handleNoteActionClick(e) {
+        const deleteBtn = e.target.closest('.note-delete-btn');
+        if (deleteBtn) {
+            const noteCard = deleteBtn.closest('.note-card');
+            const noteId = noteCard.dataset.noteId;
+            if (!noteId) return;
+
+            if (confirm('Are you sure you want to permanently delete this note?')) {
+                try {
+                    await apiFetch(`/api/notes/${noteId}`, { method: 'DELETE' });
+                    noteCard.classList.add('animate-fade-out');
+                    noteCard.addEventListener('animationend', () => noteCard.remove());
+                    showToast('Note deleted successfully.', 'success');
+                } catch (error) {
+                    showToast(`Error: ${error.message}`, 'error');
+                }
+            }
         }
     }
 
@@ -840,6 +909,158 @@ document.addEventListener('DOMContentLoaded', () => {
             setButtonActive(addBtn, 'Add Note to Project');
         }
     }
+    
+    // =================================================================================
+    // --- ▶️ YOUTUBE IMPORT HANDLERS (NEW) ---
+    // =================================================================================
+
+    function resetYouTubeModal() {
+        modalState.youtubeSearchContext = { videoId: '', videoTitle: '', aiResponse: '' };
+        document.getElementById('yt-search-input').value = '';
+        document.getElementById('yt-search-results-container').innerHTML = '';
+        document.getElementById('yt-content-section').classList.add('hidden');
+        document.getElementById('yt-player-container').innerHTML = '';
+        document.getElementById('yt-selected-video-title').textContent = 'Selected Video';
+        document.getElementById('yt-ai-response-container').classList.add('hidden');
+        document.getElementById('yt-ai-response-content').innerHTML = '';
+    }
+
+    async function handleYouTubeSearch() {
+        const input = document.getElementById('yt-search-input');
+        const query = input.value.trim();
+        if (!query) return showToast('Please enter a search query.', 'error');
+    
+        const searchBtn = document.getElementById('yt-search-btn');
+        const resultsContainer = document.getElementById('yt-search-results-container');
+        
+        document.getElementById('yt-content-section').classList.add('hidden');
+        document.getElementById('yt-ai-response-container').classList.add('hidden');
+    
+        setButtonLoading(searchBtn, 'Searching...');
+        resultsContainer.innerHTML = '<div class="spinner mx-auto my-4"></div>';
+    
+        try {
+            const searchUrl = `${YT_SEARCH_API}?q=${encodeURIComponent(query)}&channel_id=`;
+            const response = await fetch(searchUrl);
+            if (!response.ok) throw new Error(`Search failed with status: ${response.status}`);
+            const data = await response.json();
+    
+            if (!data || data.length === 0) {
+                resultsContainer.innerHTML = '<p class="text-slate-500 text-center">No results found.</p>';
+                return;
+            }
+            renderYouTubeSearchResults(data);
+        } catch (error) {
+            showToast(error.message, 'error');
+            resultsContainer.innerHTML = `<p class="text-red-500 text-center">Error: ${error.message}</p>`;
+        } finally {
+            setButtonActive(searchBtn, 'Search');
+        }
+    }
+    
+    function renderYouTubeSearchResults(results) {
+        const container = document.getElementById('yt-search-results-container');
+        container.innerHTML = `<h4 class="font-bold text-lg text-slate-800 mb-2">Search Results</h4>`;
+        const list = document.createElement('ul');
+        list.className = 'space-y-3';
+        
+        results.slice(0, 5).forEach(result => {
+            const li = document.createElement('li');
+            li.innerHTML = `
+                <a href="#" data-video-id="${sanitizeHTML(result.video_id)}" data-video-title="${sanitizeHTML(result.title)}" class="yt-result-link flex items-start gap-4 p-3 border rounded-md hover:bg-indigo-50 hover:border-indigo-300 transition-colors">
+                    <img src="${sanitizeHTML(result.thumbnail)}" alt="Thumbnail for ${sanitizeHTML(result.title)}" class="w-32 rounded-md object-cover flex-shrink-0">
+                    <div class="flex-1">
+                        <span class="text-indigo-700 font-semibold leading-tight">${sanitizeHTML(result.title)}</span>
+                        <p class="text-sm text-slate-600 mt-1">by ${sanitizeHTML(result.channel_title)}</p>
+                    </div>
+                </a>`;
+            list.appendChild(li);
+        });
+        container.appendChild(list);
+    }
+
+    function handleYouTubeResultClick(e) {
+        e.preventDefault();
+        const link = e.target.closest('.yt-result-link');
+        if (!link) return;
+
+        const { videoId, videoTitle } = link.dataset;
+        modalState.youtubeSearchContext.videoId = videoId;
+        modalState.youtubeSearchContext.videoTitle = videoTitle;
+
+        const contentSection = document.getElementById('yt-content-section');
+        const playerContainer = document.getElementById('yt-player-container');
+        const titleElement = document.getElementById('yt-selected-video-title');
+
+        document.querySelectorAll('.yt-result-link').forEach(el => el.classList.remove('bg-indigo-100', 'border-indigo-400'));
+        link.classList.add('bg-indigo-100', 'border-indigo-400');
+        
+        contentSection.classList.remove('hidden');
+        titleElement.textContent = videoTitle;
+        playerContainer.innerHTML = `<iframe src="https://www.youtube.com/embed/${videoId}" title="${videoTitle}" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen class="w-full h-full"></iframe>`;
+        document.getElementById('yt-ai-response-container').classList.add('hidden');
+    }
+
+    async function handleYouTubeSummarize() {
+        const { videoId } = modalState.youtubeSearchContext;
+        if (!videoId) return showToast('Please select a video first.', 'error');
+        
+        const prompt = "Summarize the key points of this video into a structured note, suitable for studying. Use markdown for formatting, including a title, a brief summary, and a bulleted list of main takeaways.";
+
+        const summarizeBtn = document.getElementById('yt-summarize-btn');
+        const responseContainer = document.getElementById('yt-ai-response-container');
+        const responseContent = document.getElementById('yt-ai-response-content');
+
+        setButtonLoading(summarizeBtn, 'Summarizing...');
+        responseContainer.classList.remove('hidden');
+        responseContent.innerHTML = '<div class="spinner mx-auto my-4"></div>';
+
+        try {
+            const ragUrl = `${YT_RAG_API}?video_id=${videoId}&q=${encodeURIComponent(prompt)}`;
+            const response = await fetch(ragUrl);
+            if (!response.ok) throw new Error(`AI API error: ${response.status}`);
+            const data = await response.json();
+            
+            modalState.youtubeSearchContext.aiResponse = data.ai_response;
+            responseContent.innerHTML = convertMarkdownToHtml(data.ai_response);
+        } catch (error) {
+            responseContent.innerHTML = `<p class="text-red-500">Error: ${error.message}</p>`;
+            showToast(error.message, 'error');
+        } finally {
+            setButtonActive(summarizeBtn, 'Generate Summary Note');
+        }
+    }
+
+    async function handleAddYouTubeNote() {
+        const { aiResponse, videoId } = modalState.youtubeSearchContext;
+        if (!aiResponse) return showToast('No AI summary to add.', 'error');
+        
+        const sourceUrl = `https://www.youtube.com/watch?v=${videoId}`;
+        const content = `${aiResponse}\n\n---\n**Source:** ${sourceUrl}`;
+        const addBtn = document.getElementById('yt-add-as-note-btn');
+        setButtonLoading(addBtn, 'Adding...');
+
+        try {
+            const result = await apiFetch('/api/notes', {
+                method: 'POST',
+                body: JSON.stringify({
+                    content,
+                    project_id: config.projectId,
+                    tags: 'youtube-import, ai-summary'
+                })
+            });
+            
+            document.querySelector('#notes-container .no-notes-message')?.remove();
+            renderNote(result.note, true);
+            showToast('Note added from YouTube!', 'success');
+            document.getElementById('add-from-yt-modal').classList.add('hidden');
+
+        } catch (error) {
+            showToast(error.message, 'error');
+        } finally {
+            setButtonActive(addBtn, 'Add Note to Project');
+        }
+    }
 
     // =================================================================================
     // --- 🎨 UI RENDERING & HELPERS ---
@@ -851,10 +1072,13 @@ document.addEventListener('DOMContentLoaded', () => {
 
         const noteCard = document.createElement('div');
         noteCard.className = 'note-card';
+        noteCard.dataset.noteId = note._id;
+        
         const tagsHTML = note.tags?.length > 0 ? note.tags.map(t => `<span class="tag">${sanitizeHTML(t)}</span>`).join('') : '';
         const formattedContent = sanitizeHTML(note.content).replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>').replace(/\n/g, '<br>');
 
         noteCard.innerHTML = `
+            <button class="note-delete-btn" title="Delete note" aria-label="Delete note">&times;</button>
             <div class="flex flex-wrap items-center gap-2 mb-3">
                 <span class="contributor-tag">${sanitizeHTML(note.contributor_label)}</span>
                 ${tagsHTML}
